@@ -72,6 +72,11 @@ jobs:
           /tmp/hosted/bin/python -m streamlit run streamlit_app.py \
             --server.port 8599 --server.address 127.0.0.1 \
             --server.headless true --browser.gatherUsageStats false > /tmp/hosted.log 2>&1 &
+          APP_PID=$!
+          # Stop the server on the way out, however this step ends. Without it the
+          # runner reports "Terminate orphan process" during cleanup, which is
+          # noise in a log people only read when something is wrong.
+          trap 'kill "$APP_PID" 2>/dev/null || true; wait "$APP_PID" 2>/dev/null || true' EXIT
 
           # The checker refuses to run where `sentinel` is importable, so it
           # cannot pass vacuously if this venv is ever built the wrong way.
