@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from ..config import Config
 from .base import FundamentalsProvider, NewsProvider, PriceProvider
+from .chain import FundamentalsChain
 from .eodhd import EodhdProvider
 from .finnhub import FinnhubProvider
 from .fixtures import FixtureProvider
@@ -49,7 +50,21 @@ def price_provider(config: Config) -> PriceProvider:
 
 
 def fundamentals_provider(config: Config) -> FundamentalsProvider:
-    return _build(_FUNDAMENTALS, config.data.fundamentals_provider, "fundamentals")
+    """One name, or several comma-separated as a fallback chain.
+
+    Free tiers gate fundamentals per SYMBOL, not per feature, so no single free
+    vendor covers a whole universe: `fundamentals_provider = "fmp,eodhd"` tries
+    the next vendor for the tickers the first one refuses. A single name still
+    builds a single provider, unchanged.
+    """
+    names = [n.strip() for n in config.data.fundamentals_provider.split(",") if n.strip()]
+    if not names:
+        raise UnknownProvider(
+            "fundamentals provider is empty; known: " + ", ".join(sorted(_FUNDAMENTALS))
+        )
+    if len(names) == 1:
+        return _build(_FUNDAMENTALS, names[0], "fundamentals")
+    return FundamentalsChain([_build(_FUNDAMENTALS, n, "fundamentals") for n in names])
 
 
 def news_provider(config: Config) -> NewsProvider:
@@ -65,7 +80,15 @@ def describe(config: Config) -> list[dict[str, Any]]:
     ):
         try:
             provider = builder(config)
-            out.append({"kind": kind, "provider": provider.name, "available": provider.available()})
+            # A chain reports one row PER MEMBER. Collapsed to a single
+            # "fmp+eodhd: ready" row, a chain with one key missing looks
+            # healthy, and health's whole job is to say which key is absent.
+            members = getattr(provider, "members", None) or [provider]
+            for member in members:
+                out.append({
+                    "kind": kind, "provider": member.name,
+                    "available": member.available(),
+                })
         except UnknownProvider as exc:
             out.append({"kind": kind, "provider": "?", "available": False, "error": str(exc)})
     return out

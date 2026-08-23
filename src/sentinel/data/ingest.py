@@ -111,8 +111,13 @@ def ingest(
                     if snapshot.as_of > as_of:
                         result.report.extend(quality.check_fundamentals(
                             ticker, snapshot, as_of))
+                    # A chain answers for one ticker with FMP and the next
+                    # with EODHD, so the source has to come from whoever
+                    # actually answered — naming the chain would record a
+                    # provenance that no single vendor can be held to.
+                    source = getattr(fundamentals, "answered_by", None) or fundamentals.name
                     result.fundamentals_written += repo.save_fundamentals(
-                        conn, [snapshot], source=fundamentals.name
+                        conn, [snapshot], source=source
                     )
             except ProviderError as exc:
                 # Not fatal: a ticker with prices but no fundamentals can still

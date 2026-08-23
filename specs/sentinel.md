@@ -190,6 +190,15 @@ Recorded so the gaps are known rather than discovered.
   symbol as a **query parameter** rather than a path segment and renamed four fields
   (`filingDate`, `epsDiluted`, `marketCap`, `priceToEarningsRatioTTM`). The adapter accepts both
   spellings and `FMP_API_BASE` can point back at v3, so a pre-cutoff account still works.
+  **Free tiers gate ROWS, not endpoints.** On `/stable`, FMP's free plan answered 9 of the 25 AI
+  tickers and returned `402 Payment Required — Special Endpoint: This value set for 'symbol' is
+  not available under your current subscription` for the other 16. Nothing is wrong with the
+  adapter in that case and no retry helps. `data.fundamentals_provider` therefore accepts a
+  comma-separated **fallback chain** (`"fmp,eodhd"`): each vendor is tried per ticker, the first
+  answer wins, and the `source` column records the vendor that actually answered rather than the
+  chain. Only when every vendor refuses the same ticker is it a failure, and then the error
+  carries each vendor's own reason. **Full coverage of a universe is still a paid decision** —
+  the chain widens two partial free tiers, it does not make either complete.
 - **No live LLM call has been made.** The client is exercised end to end against a stub SDK
   (including the repair turn and the no-`temperature` behaviour), but there is no
   `ANTHROPIC_API_KEY` in this environment.

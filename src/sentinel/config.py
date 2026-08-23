@@ -245,7 +245,9 @@ max_open_positions      = 12
 # "fixture" runs the whole pipeline offline from generated series — no keys, no
 # network. Swap to a real vendor once its key is in .env.
 price_provider        = "fixture"   # fixture | eodhd
-fundamentals_provider = "fixture"   # fixture | fmp | eodhd
+fundamentals_provider = "fixture"   # fixture | fmp | eodhd, or a fallback
+                                    # chain: "fmp,eodhd" tries EODHD for the
+                                    # tickers FMP's plan refuses (402/403).
 news_provider         = "fixture"   # fixture | finnhub
 staleness_hours       = 24
 min_history_bars      = 250

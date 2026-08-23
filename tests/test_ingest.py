@@ -115,3 +115,41 @@ class TestVendorFailuresAreVisible:
         vendor_issues = [i for i in result.report.issues if i.check == "vendor"]
         assert vendor_issues
         assert all(i.severity is Severity.WARN for i in vendor_issues)
+
+
+class TestIngestRecordsTheVendorThatAnswered:
+    """With a fallback chain, one ticker's row comes from FMP and the next
+    from EODHD. Filing both under the chain's name loses the provenance the
+    audit trail exists for — and it is written at ingest, so nothing later can
+    reconstruct it."""
+
+    def test_the_source_column_names_the_answering_vendor(self, conn, config, monkeypatch):
+        import datetime as dt
+        from decimal import Decimal
+
+        from sentinel.data import ingest as ingest_mod, registry
+        from sentinel.data.base import ProviderError
+        from sentinel.data.chain import FundamentalsChain
+        from sentinel.domain.models import Fundamentals
+
+        class _Vendor:
+            def __init__(self, name, covers):
+                self.name, self._covers = name, covers
+
+            def available(self): return True
+
+            def fetch_fundamentals(self, ticker):
+                if ticker in self._covers:
+                    return Fundamentals(ticker=ticker, as_of=dt.date(2026, 8, 1),
+                                        currency="USD", revenue_ttm=Decimal("1"))
+                raise ProviderError(f"402 not in plan ({self.name})")
+
+        chain = FundamentalsChain([_Vendor("fmp", {"NVDA.US"}), _Vendor("eodhd", {"ARM.US"})])
+        monkeypatch.setattr(registry, "fundamentals_provider", lambda _c: chain)
+        result = ingest_mod.ingest(conn, config, ["NVDA.US", "ARM.US"],
+                                   as_of=dt.date(2026, 8, 23), with_news=False)
+
+        assert result.fundamentals_written == 2
+        sources = dict(conn.execute(
+            "SELECT ticker, source FROM fundamentals ORDER BY ticker").fetchall())
+        assert sources == {"NVDA.US": "fmp", "ARM.US": "eodhd"}, sources
