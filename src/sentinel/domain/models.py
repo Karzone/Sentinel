@@ -99,6 +99,8 @@ class Fundamentals(Frozen):
     free_cash_flow_ttm: Decimal | None = None
     operating_cash_flow_ttm: Decimal | None = None
     total_debt: Decimal | None = None
+    total_debt_prior: Decimal | None = None
+    gross_margin_prior: Decimal | None = None
     total_equity: Decimal | None = None
     total_assets: Decimal | None = None
     total_assets_prior: Decimal | None = None
