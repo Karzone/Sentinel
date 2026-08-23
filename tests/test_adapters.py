@@ -238,13 +238,13 @@ class TestTokensNeverReachAnErrorMessage:
 
     TOKEN = "6a8b470612a6e0.52044314"          # shape of a real EODHD token
 
-    def _raising_client(self, url):
+    def _raising_client(self, url, body=""):
         import httpx
 
         class _Client:
             def get(self, *_a, **_k):
                 request = httpx.Request("GET", url)
-                response = httpx.Response(403, request=request)
+                response = httpx.Response(403, request=request, text=body)
                 raise httpx.HTTPStatusError(
                     f"Client error '403 Forbidden' for url '{url}'",
                     request=request, response=response,
@@ -275,3 +275,59 @@ class TestTokensNeverReachAnErrorMessage:
         assert self.TOKEN not in message, f"{provider_name} leaked its token: {message}"
         assert "***" in message
         assert "403" in message, "redaction must not cost the diagnostic"
+
+
+class TestTheVendorsOwnReasonSurvives:
+    """`raise_for_status()` says "403 Forbidden" and stops. Every vendor here
+    puts the actual reason in the response BODY — "Exclusive Endpoint",
+    "Legacy Endpoint", "not available under your current subscription", "limit
+    reached" — and discarding it turns four differently-actionable failures into
+    one indistinguishable 403.
+
+    Live case: EODHD and FMP both returned 403 on fundamentals for all 25
+    tickers, and there was no way to tell plan coverage from a retired endpoint.
+    """
+
+    TOKEN = "6a8b470612a6e0.52044314"
+
+    def test_the_body_reaches_the_error(self):
+        from sentinel.data.base import ProviderError
+        from sentinel.data.fmp import FmpProvider
+
+        helper = TestTokensNeverReachAnErrorMessage()
+        client = helper._raising_client(
+            f"https://financialmodelingprep.com/api/v3/x?apikey={self.TOKEN}",
+            body='{"Error Message": "Exclusive Endpoint: This endpoint is not '
+                 'available under your current subscription plan."}',
+        )
+        provider = FmpProvider(self.TOKEN, client=client)
+        with pytest.raises(ProviderError) as caught:
+            provider._get("x", {})
+        message = str(caught.value)
+        assert "Exclusive Endpoint" in message, message
+        assert "403" in message
+        assert self.TOKEN not in message, "the body is redacted too"
+
+    def test_a_body_echoing_the_token_is_still_redacted(self):
+        """Vendors sometimes echo the request URL back inside the body."""
+        from sentinel.data.base import ProviderError
+        from sentinel.data.fmp import FmpProvider
+
+        helper = TestTokensNeverReachAnErrorMessage()
+        client = helper._raising_client(
+            "https://vendor.example/x",
+            body=f"denied for https://vendor.example/x?apikey={self.TOKEN}",
+        )
+        with pytest.raises(ProviderError) as caught:
+            FmpProvider(self.TOKEN, client=client)._get("x", {})
+        assert self.TOKEN not in str(caught.value)
+
+    def test_an_empty_body_costs_nothing(self):
+        from sentinel.data.base import ProviderError
+        from sentinel.data.fmp import FmpProvider
+
+        helper = TestTokensNeverReachAnErrorMessage()
+        client = helper._raising_client("https://vendor.example/x", body="")
+        with pytest.raises(ProviderError) as caught:
+            FmpProvider(self.TOKEN, client=client)._get("x", {})
+        assert "vendor said" not in str(caught.value)

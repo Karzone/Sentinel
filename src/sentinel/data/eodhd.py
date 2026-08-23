@@ -21,7 +21,7 @@ from ..config import api_key
 from ..domain.enums import Wrapper
 from ..domain.models import Bar, Fundamentals
 from ..money import dec
-from .base import ProviderError, currency_for, redact
+from .base import ProviderError, currency_for, describe_http_error, redact
 
 BASE_URL = "https://eodhd.com/api"
 ADAPTER_VERSION = "eodhd-v1"
@@ -159,7 +159,9 @@ class EodhdProvider:
             # brief's data-warnings section, and anything a user pastes when
             # asking for help. A credential that appears in an error message is
             # a credential you have to rotate.
-            raise ProviderError(f"EODHD request failed: {redact(exc, self._token)}") from exc
+            raise ProviderError(
+                f"EODHD request failed: {describe_http_error(exc, self._token)}"
+            ) from exc
         finally:
             if self._client is None:
                 client.close()

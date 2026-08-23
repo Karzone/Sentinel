@@ -14,7 +14,7 @@ import httpx
 
 from ..config import api_key
 from ..domain.models import NewsItem
-from .base import ProviderError, redact
+from .base import ProviderError, describe_http_error, redact
 
 BASE_URL = "https://finnhub.io/api/v1"
 ADAPTER_VERSION = "finnhub-v1"
@@ -73,7 +73,9 @@ class FinnhubProvider:
             response.raise_for_status()
             return parse_news(ticker, response.json(), since=since)
         except httpx.HTTPError as exc:
-            raise ProviderError(f"Finnhub request failed: {redact(exc, self._token)}") from exc
+            raise ProviderError(
+                f"Finnhub request failed: {describe_http_error(exc, self._token)}"
+            ) from exc
         finally:
             if self._client is None:
                 client.close()

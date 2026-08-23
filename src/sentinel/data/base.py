@@ -100,3 +100,31 @@ def redact(value: object, secret: str | None) -> str:
     text = str(value)
     return text.replace(secret, "***") if secret else text
 
+def describe_http_error(exc: Exception, secret: str | None, *, limit: int = 300) -> str:
+    """An HTTP failure, WITH the vendor's own explanation of it.
+
+    `response.raise_for_status()` produces "Client error '403 Forbidden' for url
+    …" and stops there, but every vendor here puts the actual reason in the
+    RESPONSE BODY — "Exclusive Endpoint", "Legacy Endpoint", "not available
+    under your current subscription", "limit reached". Discarding the body turns
+    four distinct, differently-actionable failures into one indistinguishable
+    403, which is how a plan-coverage problem and a retired-endpoint problem
+    come to look identical.
+
+    The body is truncated and redacted: vendors sometimes echo the request URL,
+    query parameters included, back inside it.
+    """
+    text = redact(exc, secret)
+    response = getattr(exc, "response", None)
+    body = ""
+    try:
+        body = (response.text or "").strip() if response is not None else ""
+    except Exception:                       # a streamed or already-closed body
+        body = ""
+    if not body:
+        return text
+    body = redact(" ".join(body.split()), secret)
+    if len(body) > limit:
+        body = body[:limit] + "…"
+    return f"{text} — vendor said: {body}"
+
