@@ -140,3 +140,88 @@ class TestCurrencyInference:
     )
     def test_suffix_drives_currency(self, ticker, expected):
         assert currency_for(ticker) == expected
+
+
+class TestEodhdFundamentalsDate:
+    """`as_of` on a fundamentals snapshot is the PERIOD the numbers describe.
+
+    It was EODHD's `General.UpdatedAt` — the vendor's record-update timestamp —
+    which broke two things at once against a live account:
+
+    * it is stamped in EODHD's timezone, so on a UK clock every snapshot landed
+      dated TOMORROW, and `repo.get_fundamentals` reads point-in-time
+      (`as_of <= ?`). All 25 rows were written and then filtered out; the brief
+      reported "no fundamentals snapshot" for a database that had them;
+    * a snapshot "filed" today is never stale, so the staleness check would have
+      passed two-year-old financials as current.
+    """
+
+    PAYLOAD = {
+        "General": {"UpdatedAt": "2026-08-24", "CurrencyCode": "USD", "Sector": "Technology"},
+        "Highlights": {"MostRecentQuarter": "2026-06-30", "EarningsShare": "3.10",
+                       "ProfitMargin": "0.55"},
+        "Valuation": {"EnterpriseValueEbitda": "40.1"},
+    }
+
+    def test_the_period_end_is_used_not_the_vendor_update_stamp(self):
+        from sentinel.data.eodhd import parse_fundamentals
+
+        snapshot = parse_fundamentals("NVDA.US", self.PAYLOAD)
+        assert snapshot is not None
+        assert snapshot.as_of == dt.date(2026, 6, 30), (
+            "UpdatedAt is when EODHD touched the row, not the period the numbers cover"
+        )
+
+    def test_a_point_in_time_read_can_then_find_it(self, conn):
+        """The actual failure: written, then invisible."""
+        from sentinel.data.eodhd import parse_fundamentals
+        from sentinel.storage import repo
+
+        snapshot = parse_fundamentals("NVDA.US", self.PAYLOAD)
+        repo.save_fundamentals(conn, [snapshot], source="eodhd")
+        # The day the vendor stamp claimed, and the day before it.
+        found = repo.get_fundamentals(conn, "NVDA.US", as_of=dt.date(2026, 8, 23))
+        assert found is not None, "the snapshot was saved and then filtered out again"
+        assert found.as_of == dt.date(2026, 6, 30)
+
+    def test_the_update_stamp_is_still_the_fallback(self):
+        from sentinel.data.eodhd import parse_fundamentals
+
+        payload = {"General": {"UpdatedAt": "2026-05-01"}, "Highlights": {"EarningsShare": "1"}}
+        snapshot = parse_fundamentals("X.US", payload)
+        assert snapshot is not None and snapshot.as_of == dt.date(2026, 5, 1)
+
+    def test_the_quarter_that_ended_is_not_the_next_earnings_date(self):
+        """Assigning MostRecentQuarter to next_earnings_date asserted the next
+        earnings were in the past."""
+        from sentinel.data.eodhd import parse_fundamentals
+
+        snapshot = parse_fundamentals("NVDA.US", self.PAYLOAD)
+        assert snapshot.next_earnings_date != dt.date(2026, 6, 30)
+        assert snapshot.next_earnings_date is None
+
+
+class TestFutureDatedFundamentalsAreReported:
+    """quality.check_fundamentals has a CRITICAL branch for a snapshot dated
+    after the as-of date. It was unreachable: get_fundamentals filters such a
+    row out point-in-time, so the pipeline saw None and reported the much milder
+    "no fundamentals snapshot". Ingest holds the record before the filter."""
+
+    def test_ingest_reports_a_future_dated_snapshot(self, conn, config, monkeypatch):
+        import datetime as _dt
+        from sentinel.data import ingest as ingest_mod, registry
+        from sentinel.domain.models import Fundamentals
+
+        as_of = _dt.date(2026, 8, 23)
+        future = Fundamentals(ticker="X.US", as_of=_dt.date(2026, 8, 24), currency="USD")
+
+        class _Vendor:
+            name = "stub"
+            def available(self): return True
+            def fetch_fundamentals(self, ticker): return future
+
+        monkeypatch.setattr(registry, "fundamentals_provider", lambda _c: _Vendor())
+        result = ingest_mod.ingest(conn, config, ["X.US"], as_of=as_of, with_news=False)
+
+        critical = [i for i in result.report.issues if "after the as-of date" in i.detail]
+        assert critical, "a snapshot dated in the future was stored with no complaint"

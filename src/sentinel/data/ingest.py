@@ -101,6 +101,16 @@ def ingest(
             try:
                 snapshot = fundamentals.fetch_fundamentals(ticker)
                 if snapshot is not None:
+                    # quality.check_fundamentals has a CRITICAL branch for a
+                    # snapshot dated after the as-of date, and it is UNREACHABLE
+                    # from the pipeline: repo.get_fundamentals filters such a row
+                    # out point-in-time, so the pipeline sees None and reports the
+                    # much milder "no fundamentals snapshot". The precise error
+                    # existed and could never fire. Ingest is the one place
+                    # holding the record before the filter, so it checks here.
+                    if snapshot.as_of > as_of:
+                        result.report.extend(quality.check_fundamentals(
+                            ticker, snapshot, as_of))
                     result.fundamentals_written += repo.save_fundamentals(
                         conn, [snapshot], source=fundamentals.name
                     )

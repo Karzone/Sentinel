@@ -78,11 +78,29 @@ def parse_fundamentals(ticker: str, payload: dict[str, Any]) -> Fundamentals | N
         value = source.get(key)
         return None if value in (None, "", "NA") else dec(value)
 
-    as_of_raw = general.get("UpdatedAt") or dt.date.today().isoformat()
-    try:
-        as_of = dt.date.fromisoformat(str(as_of_raw)[:10])
-    except ValueError:
-        as_of = dt.date.today()
+    # `as_of` is the PERIOD the numbers describe, not when the vendor last
+    # touched the row. `General.UpdatedAt` is EODHD's record-update timestamp,
+    # and using it here broke two things at once.
+    #
+    # It is stamped in EODHD's timezone, so it runs a day ahead of a UK clock —
+    # every snapshot landed dated tomorrow, and `repo.get_fundamentals` reads
+    # point-in-time (`as_of <= ?`), so all 25 rows were written and then
+    # filtered out. The brief reported "no fundamentals snapshot" for a database
+    # that had them.
+    #
+    # And even with the dates in range it defeated the staleness check: a
+    # snapshot "filed" today is never stale, so two-year-old financials would
+    # have scored as current.
+    #
+    # MostRecentQuarter is the period end, which is what both of those want.
+    period = _maybe_date(highlights.get("MostRecentQuarter"))
+    if period is None:
+        as_of_raw = general.get("UpdatedAt") or dt.date.today().isoformat()
+        try:
+            period = dt.date.fromisoformat(str(as_of_raw)[:10])
+        except ValueError:
+            period = dt.date.today()
+    as_of = period
 
     return Fundamentals(
         ticker=ticker,
@@ -98,7 +116,11 @@ def parse_fundamentals(ticker: str, payload: dict[str, Any]) -> Fundamentals | N
         total_debt=num(highlights, "TotalDebt"),
         pe_ratio=num(highlights, "PERatio"),
         ev_ebitda=num(valuation, "EnterpriseValueEbitda"),
-        next_earnings_date=_maybe_date(highlights.get("MostRecentQuarter")),
+        # NOT MostRecentQuarter — that is the quarter that just ENDED, so using
+        # it here asserted the next earnings date was in the past. Nothing reads
+        # this field today; None is the honest value until a real upcoming-
+        # earnings field is confirmed against the live API.
+        next_earnings_date=None,
         wrapper=Wrapper.UNKNOWN,
     )
 
