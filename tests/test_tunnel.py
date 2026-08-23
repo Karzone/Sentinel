@@ -27,12 +27,20 @@ def rig(tmp_path):
     bin_dir.mkdir()
     calls = tmp_path / "calls.log"
 
+    grandchild = tmp_path / "grandchild.pid"
     # `uv run ... sentinel dashboard` — a server, so it must not exit on its own.
+    # It spawns a GRANDCHILD deliberately, mirroring the real chain
+    # (uv run -> sentinel -> python -m streamlit). A fake that is a single
+    # process cannot detect a shutdown that kills only the wrapper, which is
+    # exactly the bug that reached a live run: the script logged "stopped"
+    # while Streamlit stayed bound to the port, reparented to init.
     (bin_dir / "uv").write_text(
         "#!/usr/bin/env bash\n"
         f'echo "uv $@" >> "{calls}"\n'
         'if [ "${FAKE_DASHBOARD_DIES:-0}" = "1" ]; then exit 1; fi\n'
-        "sleep ${FAKE_DASHBOARD_LIFETIME:-30}\n"
+        "sleep ${FAKE_DASHBOARD_LIFETIME:-30} &\n"
+        f'echo $! > "{grandchild}"\n'
+        "wait\n"
     )
     # cloudflared, likewise long-running.
     (bin_dir / "cloudflared").write_text(
@@ -69,9 +77,22 @@ def rig(tmp_path):
         proc = subprocess.run(["/bin/bash", str(SCRIPT)], env=env,
                               capture_output=True, text=True, timeout=timeout)
         proc.calls = calls.read_text() if calls.exists() else ""   # type: ignore[attr-defined]
+        proc.grandchild = (                                        # type: ignore[attr-defined]
+            int(grandchild.read_text().strip()) if grandchild.exists() else None
+        )
         return proc
 
     return run
+
+
+def _alive(pid: int | None) -> bool:
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
 
 
 class TestTunnelRunner:
@@ -114,6 +135,17 @@ class TestTunnelRunner:
         proc = rig(FAKE_TUNNEL_LIFETIME=1, FAKE_DASHBOARD_LIFETIME=20)
         assert proc.returncode == 1
         assert "cloudflared exited" in proc.stdout
+
+    def test_the_whole_server_tree_dies_not_just_the_wrapper(self, rig):
+        """The bug a live run found. Killing the forked pid reaches `uv run`
+        and stops there; the Streamlit grandchild survives, is reparented to
+        init and keeps serving the port — while the log says "stopped"."""
+        proc = rig(FAKE_TUNNEL_LIFETIME=1, FAKE_DASHBOARD_LIFETIME=25)
+        assert "stopped" in proc.stdout
+        assert proc.grandchild is not None, "the fake never recorded a grandchild"
+        assert not _alive(proc.grandchild), (
+            f"pid {proc.grandchild} outlived the script that reported stopping it"
+        )
 
     def test_a_dead_dashboard_takes_the_tunnel_down_with_it(self, rig):
         """A tunnel outliving its origin is a public 502 that looks like an

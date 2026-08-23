@@ -18,6 +18,11 @@
 #   1  refused to start, or a process died
 #
 set -uo pipefail
+# Job control, so every background job becomes its own process-group leader.
+# Shutdown depends on it: `uv run` forks the CLI, which forks `python -m
+# streamlit`, so signalling the pid we forked reaches the wrapper and nothing
+# else. Signalling the GROUP reaches the whole chain.
+set -m
 export PATH="${PATH:+$PATH:}/usr/local/bin:/usr/bin:/bin"
 
 PROJECT_ROOT="${SENTINEL_PROJECT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -64,11 +69,31 @@ cd "$SENTINEL_HOME" || { log "FATAL: SENTINEL_HOME=$SENTINEL_HOME does not exist
 
 DASHBOARD_PID=""
 TUNNEL_PID=""
+
+stop_group() {
+  # The negative pid is the point: it signals the process GROUP. `kill $pid`
+  # reaches only the process this script forked — for the dashboard that is the
+  # `uv run` wrapper, whose `sentinel` child has its own `python -m streamlit`
+  # child. Killing the wrapper leaves that grandchild alive and reparented to
+  # init, still bound to the port, still serving. This script's whole promise
+  # is that the two halves die together, and a pid-only kill quietly breaks it
+  # while logging "stopped".
+  local pid="${1:-}" name="${2:-process}"
+  [ -n "$pid" ] || return 0
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+  for _ in $(seq 1 20); do
+    kill -0 -- "-$pid" 2>/dev/null || return 0
+    sleep 0.5
+  done
+  log "$name ignored TERM after 10s; sending KILL"
+  kill -KILL -- "-$pid" 2>/dev/null
+}
+
 shutdown() {
   # Kill the TUNNEL first. Reversing this leaves a public URL answering for an
   # origin that is already gone, which looks like an outage rather than a stop.
-  [ -n "$TUNNEL_PID" ] && kill "$TUNNEL_PID" 2>/dev/null
-  [ -n "$DASHBOARD_PID" ] && kill "$DASHBOARD_PID" 2>/dev/null
+  stop_group "$TUNNEL_PID" cloudflared
+  stop_group "$DASHBOARD_PID" dashboard
   wait 2>/dev/null
   log "stopped"
 }
