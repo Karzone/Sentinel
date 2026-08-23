@@ -268,6 +268,27 @@ briefs = "data/briefs"
 [universes]
 demo = ["DEMO1.LSE", "DEMO2.LSE", "DEMO3.US", "DEMO4.US"]
 
+# "AI stocks" is not an index and has no definition, so this is a JUDGEMENT
+# LIST, not a fact. The criterion used: US-listed companies whose revenue or
+# capital spending is materially driven by AI compute, models or tooling —
+# grouped below by how they are exposed, because those groups behave
+# differently in a drawdown.
+#
+# Verify it against the vendor before trusting it. A ticker that has been
+# renamed, delisted or is not on your plan will simply return no bars, and the
+# quality layer will report it rather than silently dropping it.
+ai = [
+  # Compute — the picks-and-shovels layer
+  "NVDA.US", "AMD.US", "AVGO.US", "TSM.US", "MU.US",
+  "INTC.US", "ARM.US", "ASML.US", "MRVL.US", "SMCI.US",
+  # Platforms — the buyers of that compute
+  "MSFT.US", "GOOGL.US", "AMZN.US", "META.US", "ORCL.US", "IBM.US",
+  # Infrastructure — power, cooling, networking, servers
+  "VRT.US", "ANET.US", "DELL.US", "HPE.US",
+  # Applications — companies selling AI rather than building it
+  "PLTR.US", "NOW.US", "SNOW.US", "CRM.US", "MDB.US",
+]
+
 [sectors]
 # Ticker -> sector, for the 30% concentration limit. An unmapped ticker falls
 # into a shared "unknown" bucket, which concentrates rather than escapes.
@@ -275,6 +296,41 @@ demo = ["DEMO1.LSE", "DEMO2.LSE", "DEMO3.US", "DEMO4.US"]
 "DEMO2.LSE" = "industrials"
 "DEMO3.US"  = "technology"
 "DEMO4.US"  = "healthcare"
+
+# The AI list, mapped on real economic exposure rather than on the theme.
+#
+# READ THIS BEFORE RELYING ON THE 30% SECTOR CAP HERE. These names are spread
+# across five sectors, so the cap permits far more AI exposure than it looks —
+# but AI exposure is what makes them move together, and that cuts ACROSS
+# sectors. Holding NVDA, MSFT and VRT is one bet wearing three sector labels.
+# The concentration limit is doing less work on this universe than on a
+# diversified one, and no config change fixes that: it is a property of the
+# universe you chose.
+"NVDA.US"  = "semiconductors"
+"AMD.US"   = "semiconductors"
+"AVGO.US"  = "semiconductors"
+"TSM.US"   = "semiconductors"
+"MU.US"    = "semiconductors"
+"INTC.US"  = "semiconductors"
+"ARM.US"   = "semiconductors"
+"ASML.US"  = "semiconductors"
+"MRVL.US"  = "semiconductors"
+"SMCI.US"  = "hardware"
+"DELL.US"  = "hardware"
+"HPE.US"   = "hardware"
+"ANET.US"  = "hardware"
+"VRT.US"   = "industrials"
+"MSFT.US"  = "software"
+"ORCL.US"  = "software"
+"IBM.US"   = "software"
+"NOW.US"   = "software"
+"SNOW.US"  = "software"
+"CRM.US"   = "software"
+"MDB.US"   = "software"
+"PLTR.US"  = "software"
+"GOOGL.US" = "communication"
+"META.US"  = "communication"
+"AMZN.US"  = "consumer"
 
 [benchmarks]
 B1 = "VWRP.LSE"   # Vanguard FTSE All-World — the "just index it" question

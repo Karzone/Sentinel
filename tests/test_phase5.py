@@ -394,3 +394,49 @@ class TestMonteCarloPlacement:
         placed = benchmarks.place_strategy(self._result(distribution), Decimal("0.5"),
                                            strategy_exposure=1.8)
         assert "more market risk" in placed.verdict()
+
+
+class TestCuratedUniverses:
+    """The starter config's ticker lists.
+
+    A universe whose tickers have no sector mapping is worse than no universe:
+    `sector_of` falls back to a single shared "unknown" bucket, so every
+    unmapped name counts against the SAME 30% limit and the concentration check
+    silently stops distinguishing between them.
+    """
+
+    def _starter(self):
+        import tomllib
+        from sentinel.config import STARTER_CONFIG
+        return tomllib.loads(STARTER_CONFIG)
+
+    def test_the_ai_universe_resolves(self):
+        from sentinel.config import Config, _decimalise
+
+        config = Config(**_decimalise(self._starter()))
+        assert len(config.universe("ai")) == 25
+
+    def test_every_ai_ticker_carries_a_sector(self):
+        starter = self._starter()
+        unmapped = [t for t in starter["universes"]["ai"] if t not in starter["sectors"]]
+        assert not unmapped, (
+            f"{unmapped} have no sector, so they share the 'unknown' bucket and the "
+            "30% concentration limit stops telling them apart"
+        )
+
+    def test_it_is_not_one_sector_wearing_a_theme(self):
+        """Not a diversification claim — these names correlate through AI
+        exposure regardless of sector. It asserts only that the mapping reflects
+        real economic exposure rather than being stamped 'technology' wholesale,
+        which would make the sector cap bind on the whole universe at once."""
+        from collections import Counter
+
+        starter = self._starter()
+        spread = Counter(starter["sectors"][t] for t in starter["universes"]["ai"])
+        assert len(spread) >= 4, spread
+        assert max(spread.values()) < len(starter["universes"]["ai"]), spread
+
+    def test_tickers_carry_an_exchange_suffix(self):
+        """The adapters key on it. A bare "NVDA" is not the same request."""
+        for ticker in self._starter()["universes"]["ai"]:
+            assert "." in ticker, f"{ticker} has no exchange suffix"
