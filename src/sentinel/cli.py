@@ -624,6 +624,36 @@ def notify_failure(
     raise typer.Exit(EXIT_OK if result.delivered or not result.configured else EXIT_FAILURE)
 
 
+def pages_directory_warning(script: Path) -> str | None:
+    """Warn when a ``pages`` directory sits beside the dashboard entry script.
+
+    Streamlit decides how to EXECUTE the app from whether that folder exists:
+    ``PagesManager`` computes a process-wide ``uses_pages_directory`` flag the
+    first time it is constructed, and when the flag is true the script runner
+    calls ``_mpa_v1()`` instead of exec'ing the script. v1 builds its navigation
+    from ``pages/*.py``, so it cannot resolve a deep-linked URL, and it emits a
+    "Page not found" message before falling through and running our script
+    anyway. Our own ``st.navigation`` then clears the flag for the rest of the
+    process — so the symptom is exactly ONE bad session per server start: open
+    /risk before anything else and the right page renders under a modal that
+    swallows clicks.
+
+    An EMPTY directory is enough, because the glob simply matches nothing. That
+    is also why this check lives here rather than in a test over committed
+    files: git cannot store an empty directory, so the thing that causes the bug
+    is invisible to every test CI can run on a fresh clone.
+    """
+    pages = script.parent / "pages"
+    if not pages.is_dir():
+        return None
+    return (
+        f"[yellow]warning:[/] {pages} exists. Streamlit treats a `pages` "
+        "directory beside the entry script as a v1 multi-page app, which breaks "
+        "deep links on the first session after every restart. This app builds "
+        "its pages in views.PAGES — delete that directory."
+    )
+
+
 @app.command()
 def dashboard(
     port: int = typer.Option(8501, "--port"),
@@ -681,6 +711,11 @@ def dashboard(
             raise typer.Exit(EXIT_FAILURE)
 
     script = Path(__file__).parent / "dashboard" / "run.py"
+
+    warning = pages_directory_warning(script)
+    if warning:
+        console.print(warning)
+
     console.print(f"[green]starting[/] http://{address}:{port}")
     if not env.get(dash_auth.PASSWORD_ENV):
         console.print(

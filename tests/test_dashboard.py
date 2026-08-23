@@ -9,6 +9,7 @@ spec for the thing it claims to check.
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
 import re
 import sqlite3
 from decimal import Decimal
@@ -632,3 +633,40 @@ class TestEvalsPage:
         gate = [h for h in rendered.html if "samples needed for a verdict" in h]
         assert gate, "the catalyst kill criterion was never rendered"
         assert re.search(r"has (\d+) of the 100", gate[0]).group(1) == "3"
+
+
+class TestStreamlitExecutionMode:
+    """A `pages` directory beside run.py changes how Streamlit runs the app.
+
+    PagesManager computes `uses_pages_directory` once per process from whether
+    that folder exists; when it is true the script runner calls `_mpa_v1()`
+    instead of exec'ing the script, and v1's navigation — built from `pages/*.py`
+    — cannot resolve a deep-linked URL, so it emits "Page not found" before
+    falling through to our script. `st.navigation` then clears the flag for the
+    rest of the process, so exactly the FIRST session after each server start is
+    affected: the correct page renders under a modal that swallows clicks.
+    """
+
+    def test_no_pages_directory_sits_beside_the_entry_script(self):
+        from sentinel.dashboard import run as run_module
+
+        pages = pathlib.Path(run_module.__file__).parent / "pages"
+        assert not pages.exists(), (
+            f"{pages} puts Streamlit into v1 multi-page mode. This app builds "
+            "its pages in views.PAGES; delete the directory."
+        )
+
+    def test_the_launcher_warns_when_one_appears(self, tmp_path):
+        """The directory that caused this was empty and untracked, so no test
+        over committed files could have seen it — git cannot store an empty
+        directory. The launcher can, because it knows the real path."""
+        from sentinel.cli import pages_directory_warning
+
+        script = tmp_path / "run.py"
+        script.write_text("")
+        assert pages_directory_warning(script) is None
+
+        (tmp_path / "pages").mkdir()          # empty is enough
+        warning = pages_directory_warning(script)
+        assert warning is not None
+        assert "v1 multi-page app" in warning
