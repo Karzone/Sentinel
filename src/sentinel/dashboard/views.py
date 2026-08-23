@@ -470,10 +470,125 @@ def data_health(st, ctx: Context) -> None:
         st.dataframe(queries.audit_counts(ctx.conn), width="stretch", hide_index=True)
 
 
+# ---------------------------------------------------------------- 6. search
+
+
+STANCE_STATUS = {"BUY": "good", "HOLD": "warning", "AVOID": "critical", "NOT SCORED": None}
+
+
+def search(st, ctx: Context) -> None:
+    st.markdown("### Search")
+    st.markdown(
+        '<p class="sx-note">One ticker, what the system knows about it, and what it '
+        'decided. The verdict applies no threshold of its own — it reports decisions '
+        'the rules and risk layers already made, so this page cannot disagree with '
+        'the brief.</p>',
+        unsafe_allow_html=True,
+    )
+
+    tickers = queries.searchable_tickers(ctx.conn)
+    if not tickers:
+        st.info("No ticker has price history yet. Run `sentinel ingest` first.", icon="📭")
+        return
+
+    ticker = st.selectbox("Ticker", tickers, key="search-ticker")
+    if not ticker:
+        return
+
+    verdict = queries.verdict_for(ctx.conn, ticker)
+    stats = queries.ticker_stats(ctx.conn, ticker)
+
+    # The verdict, and immediately under it the reason — never a bare signal.
+    st.markdown(
+        ui.verdict_banner(verdict.stance, verdict.headline,
+                          status=STANCE_STATUS.get(verdict.stance), mode=ctx.mode),
+        unsafe_allow_html=True,
+    )
+    if verdict.as_of:
+        st.caption(
+            f"Scored {verdict.as_of} · composite {verdict.composite:.0f}/100 · "
+            f"{verdict.conviction} conviction"
+            + (f" · {verdict.horizon_days}-day horizon" if verdict.horizon_days else "")
+        )
+
+    if verdict.blockers:
+        _section(st, "Why it is not a buy", "Every layer that refused it, and what it said.")
+        for blocker in verdict.blockers:
+            st.markdown(f"- {blocker}")
+    if verdict.thesis:
+        _section(st, "Thesis")
+        st.markdown(verdict.thesis)
+    if verdict.falsifier:
+        _section(st, "What would falsify this",
+                 "An idea that cannot be wrong is not an idea.")
+        st.markdown(verdict.falsifier)
+
+    st.divider()
+    _section(st, "Statistics",
+             "Computed by the same indicators the technical module scores with.")
+    _stat_tiles(st, ctx, stats)
+
+    st.divider()
+    _section(st, "Price", "Adjusted close, with the 50 and 200-day moving averages.")
+    _chart(st, charts.price_history(queries.price_frame(ctx.conn, ticker), ctx.mode),
+           key=f"price-{ticker}")
+    _table_twin(st, queries.price_frame(ctx.conn, ticker).tail(60))
+
+    if verdict.as_of is not None:
+        st.divider()
+        _section(st, "Module scores", "Shown as a deviation from neutral 50.")
+        item = queries.latest_idea_for(ctx.conn, ticker)
+        if item is not None:
+            frame = queries.module_scores_frame(item)
+            _chart(st, charts.module_scores(frame, ctx.mode), key=f"modules-{ticker}")
+            _table_twin(st, frame)
+
+
+def _stat_tiles(st, ctx: Context, stats: dict) -> None:
+    if not stats:
+        st.caption("No price history for this ticker.")
+        return
+
+    def pct(value, digits=1):
+        return "—" if value is None else f"{value * 100:.{digits}f}%"
+
+    def num(value, digits=2):
+        return "—" if value is None else f"{value:,.{digits}f}"
+
+    rsi = stats.get("rsi14")
+    rows = [
+        ("Last close", num(stats.get("last_close")), str(stats.get("last_bar", "")), None),
+        ("RSI (14)", num(rsi, 0),
+         "overbought" if rsi and rsi > 70 else "oversold" if rsi and rsi < 30 else "neutral",
+         "warning" if rsi and (rsi > 70 or rsi < 30) else None),
+        ("vs 200-day", "above" if stats.get("above_sma200") else "below",
+         ("above" if stats.get("above_sma200") else "below")
+         + f" the 200-day at {num(stats.get('sma200'))}",
+         "good" if stats.get("above_sma200") else "critical"),
+        # The caption has to carry the polarity, because the colour lands on it:
+        # "skips the last month" is a methodology note, and rendering it red
+        # reads as a warning about the method rather than about the number.
+        ("Momentum 12-1", pct(stats.get("momentum_12_1")),
+         ("positive" if (stats.get("momentum_12_1") or 0) > 0 else "negative")
+         + " · skips the last month",
+         "good" if (stats.get("momentum_12_1") or 0) > 0 else "critical"),
+        ("Realised vol", pct(stats.get("realised_vol")), "20-day", None),
+        ("ATR (14)", num(stats.get("atr14")), "stop distance input", None),
+        ("Drawdown", pct(stats.get("drawdown")), "from peak", None),
+        ("History", f"{stats.get('bars', 0):,}", "bars", None),
+    ]
+    columns = st.columns(4, gap="small")
+    for index, (label, value, delta, status) in enumerate(rows):
+        with columns[index % 4]:
+            st.markdown(ui.tile(label, value, delta=delta, delta_status=status,
+                                mode=ctx.mode), unsafe_allow_html=True)
+
+
 PAGES = [
     ("Portfolio", portfolio),
     ("Risk", risk),
     ("Ideas", ideas),
     ("Evals", evals),
     ("Data health", data_health),
+    ("Search", search),
 ]

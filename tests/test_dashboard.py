@@ -720,3 +720,96 @@ class TestTunnelIsNotALocalSession:
                            is_local=is_local).outcome == "rejected"
         assert auth.decide(configured_password="s3cret", submitted="s3cret",
                            is_local=is_local).outcome == "granted"
+
+
+class TestAcceptedMeansRulesAndRisk:
+    """"Accepted" is the word this whole system turns on: it is what "ready to
+    buy" means. It must mean cleared the rules layer AND approved by the risk
+    layer — the layer the spec says no signal may override.
+
+    The trap is that it is not computable from the stored idea. score_universe
+    persists an idea BEFORE assess() runs, and assess returns its verdicts to the
+    caller without writing them back (ideas are append-only, so it could not).
+    Idea.risk is therefore always None on anything read back, which makes
+    Idea.accepted always False. The audit trail is the only surviving record.
+    """
+
+    @pytest.fixture()
+    def scored(self, conn, config):
+        from sentinel.storage import audit
+
+        idea_ids = {}
+        for ticker, rules_ok, risk_ok in (
+            ("PASS.US", True, True),        # the only one that is ready to buy
+            ("RISKED.US", True, False),     # rules cleared, RISK REFUSED
+            ("RULED.US", False, True),      # rules refused
+        ):
+            item = _idea(ticker, rejected=() if rules_ok else ("R6",))
+            repo.save_idea(conn, item)
+            idea_ids[ticker] = item.id
+            audit.record(
+                conn,
+                audit.AuditEvent.RISK_APPROVED if risk_ok
+                else audit.AuditEvent.RISK_CHECK_FAILED,
+                ticker=ticker,
+                payload={"idea_id": item.id,
+                         **({} if risk_ok else {"reasons": ["max single position 10%"]})},
+            )
+        return idea_ids
+
+    def test_an_idea_the_risk_layer_refused_is_not_accepted(self, conn, config, scored):
+        """This is the regression. `not rejected_by_rules` called it accepted."""
+        frame = queries.ideas_frame(conn).set_index("ticker")
+        assert frame.loc["RISKED.US", "rules_ok"], "the rules layer did clear it"
+        assert bool(frame.loc["RISKED.US", "risk_ok"]) is False
+        assert not frame.loc["RISKED.US", "accepted"], (
+            "an idea the risk layer refused was reported as accepted"
+        )
+
+    def test_only_clearing_both_layers_counts(self, conn, config, scored):
+        frame = queries.ideas_frame(conn).set_index("ticker")
+        assert frame.loc["PASS.US", "accepted"]
+        assert not frame.loc["RULED.US", "accepted"]
+
+    def test_the_search_verdict_names_the_layer_that_refused(self, conn, config, scored):
+        verdict = queries.verdict_for(conn, "RISKED.US")
+        assert verdict.stance == "AVOID"
+        assert not verdict.ready_to_buy
+        assert any("risk layer" in b for b in verdict.blockers), verdict.blockers
+        assert any("max single position" in b for b in verdict.blockers), verdict.blockers
+
+    def test_a_ticker_with_no_idea_gets_no_opinion_rather_than_a_guess(self, conn, config):
+        verdict = queries.verdict_for(conn, "UNKNOWN.US")
+        assert verdict.stance == "NOT SCORED"
+        assert not verdict.ready_to_buy
+        assert verdict.composite is None
+
+    def test_the_verdict_applies_no_threshold_of_its_own(self, conn, config):
+        """A low composite that cleared both layers is still a BUY. If this page
+        second-guessed the pipeline it would become a competing opinion, and the
+        brief and the dashboard could disagree about the same ticker."""
+        from sentinel.storage import audit
+
+        item = _idea("LOWSCORE.US", score=Decimal("31"))
+        repo.save_idea(conn, item)
+        audit.record(conn, audit.AuditEvent.RISK_APPROVED, ticker="LOWSCORE.US",
+                     payload={"idea_id": item.id})
+        verdict = queries.verdict_for(conn, "LOWSCORE.US")
+        assert verdict.stance == "BUY"
+        assert verdict.composite == pytest.approx(31.0)
+
+
+def _idea(ticker: str, *, rejected: tuple[str, ...] = (), score: Decimal = Decimal("60")):
+    from sentinel.domain.enums import Conviction, Direction
+    from sentinel.domain.models import Idea, Signal
+
+    return Idea(
+        id=f"idea-{ticker}", created_at=dt.datetime(2026, 8, 20, tzinfo=dt.UTC),
+        as_of=dt.date(2026, 8, 20), ticker=ticker,
+        idea_class=IdeaClass.LONG_TERM, conviction=Conviction.MEDIUM,
+        direction=Direction.LONG,
+        signals=(Signal(module="technical", module_version="test-1", ticker=ticker,
+                        as_of=dt.date(2026, 8, 20), score=score,
+                        confidence=Decimal("0.8"), notes="fixture"),),
+        composite_score=score, rejected_by_rules=rejected,
+    )

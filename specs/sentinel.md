@@ -130,6 +130,23 @@ starting either process, since a systemd unit that fails at the second has alrea
 first. Generalise: an access control that infers safety from a network fact is only as good as the
 fact, and tunnels are built to falsify this one.
 
+**"Accepted" means the rules layer AND the risk layer, and it is read from the audit trail.**
+`score_universe` persists an idea BEFORE `assess()` runs, and `assess` returns its verdicts to the
+caller without writing them back — ideas are append-only, so it could not update them anyway.
+`Idea.risk` is therefore always `None` on anything read back from the database, which makes
+`Idea.accepted` always False and unusable as "did this clear the risk layer". The surviving record
+is the audit trail: `assess` writes RISK_APPROVED or RISK_CHECK_FAILED against the idea id for every
+idea it evaluates, and `queries.risk_outcomes` reads that back. Before this, the Ideas table defined
+accepted as `not rejected_by_rules` — on the demo pool that reported **21 of 28** ideas accepted when
+only **14** had cleared both layers, overstating by 7 ideas the risk layer had refused. The layer the
+spec says nothing may override was the one the table ignored.
+
+**The search page reports decisions; it does not make them.** `queries.verdict_for` applies no
+threshold of its own — BUY / HOLD / AVOID / NOT SCORED are each derived from a decision some other
+layer already recorded. A ticker the pipeline has not scored returns NOT SCORED rather than a guess.
+This is what stops the page becoming a second opinion that can disagree with the brief about the
+same ticker, and it is why a low composite that cleared both layers still reads BUY.
+
 **No statistics are re-derived in the dashboard.** Hit rates, calibration and Brier come from
 `evals/` — the same code the CLI and the weekly review use. A dashboard that computed its own
 version of a hit rate would eventually disagree with the eval that gates real money, and the wrong

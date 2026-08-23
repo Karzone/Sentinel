@@ -501,3 +501,45 @@ def sparkline(frame: pd.DataFrame, mode: str, *, y: str = "nav", height: int = 4
         )
         .properties(height=height, width="container")
     )
+
+def price_history(
+    frame: pd.DataFrame, mode: str, *, height: int = DEFAULT_HEIGHT
+) -> alt.LayerChart | alt.Chart:
+    """Adjusted close with its 50 and 200-day moving averages.
+
+    One y-axis, and the averages are derived from the same series rather than a
+    second measure — so this stays a single-scale chart even though it carries
+    three lines. Volume is deliberately absent: it belongs to a different scale,
+    and a second axis is the one thing this codebase never draws.
+    """
+    if frame.empty:
+        return _empty("No price history for this ticker.", mode)
+
+    p = _p(mode)
+    data = frame.copy()
+    data["SMA 50"] = data["close"].rolling(50).mean()
+    data["SMA 200"] = data["close"].rolling(200).mean()
+    long = data.melt(id_vars="date", value_vars=["close", "SMA 50", "SMA 200"],
+                     var_name="series", value_name="value").dropna(subset=["value"])
+    long["series"] = long["series"].replace({"close": "Close"})
+
+    scale = alt.Scale(domain=["Close", "SMA 50", "SMA 200"],
+                      range=[p.series[0], p.series[3], p.ink_muted])
+    lines = (
+        alt.Chart(long)
+        .mark_line(strokeWidth=1.6, interpolate="monotone")
+        .encode(
+            x=alt.X("date:T", title=None, axis=alt.Axis(format="%b %y", labelAngle=0)),
+            y=alt.Y("value:Q", title=None, scale=alt.Scale(zero=False, nice=True)),
+            color=alt.Color("series:N", scale=scale,
+                            legend=alt.Legend(title=None, orient="bottom",
+                                              symbolType="stroke")),
+            strokeWidth=alt.condition(alt.datum.series == "Close",
+                                      alt.value(2.0), alt.value(1.3)),
+            tooltip=[alt.Tooltip("date:T", title="Date"),
+                     alt.Tooltip("series:N", title=""),
+                     alt.Tooltip("value:Q", title="Value", format=",.2f")],
+        )
+    )
+    return lines.properties(height=height, width="container")
+

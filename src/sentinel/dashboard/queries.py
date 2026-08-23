@@ -18,6 +18,7 @@ would be the one on screen.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import sqlite3
 from dataclasses import dataclass
 from decimal import Decimal
@@ -31,6 +32,7 @@ from ..domain.enums import IdeaClass, Severity
 from ..domain.models import Idea
 from ..evals import calibration, dataset, signal_quality
 from ..money import dec
+from ..storage import audit
 from ..risk import RiskEngine, sector_allocation as risk_sector_allocation
 from ..storage import audit, repo
 
@@ -322,14 +324,47 @@ def rule_rejection_counts(conn: sqlite3.Connection, *, days: int = 365) -> pd.Da
 # ---------------------------------------------------------------- ideas
 
 
+def risk_outcomes(conn: sqlite3.Connection) -> dict[str, bool]:
+    """``idea_id -> approved``, read from the audit trail.
+
+    The risk verdict is NOT on the stored idea. ``score_universe`` persists an
+    idea before ``assess`` runs, and ``assess`` returns its verdicts to the
+    caller without writing them back — ideas are append-only, so it could not
+    update them anyway. ``Idea.risk`` is therefore always None on anything read
+    from the database, which makes ``Idea.accepted`` always False and unusable
+    as "did this clear the risk layer".
+
+    The audit trail is where the decision survives: ``assess`` records
+    RISK_APPROVED or RISK_CHECK_FAILED against the idea id for every idea it
+    evaluates. This reads that back, so "accepted" on any surface can mean what
+    it says — cleared the rules layer AND approved by the risk layer.
+    """
+    outcomes: dict[str, bool] = {}
+    for event, approved in ((audit.AuditEvent.RISK_CHECK_FAILED, False),
+                            (audit.AuditEvent.RISK_APPROVED, True)):
+        for row in conn.execute(
+            "SELECT payload FROM audit WHERE event = ? ORDER BY id", (event,)
+        ):
+            try:
+                idea_id = json.loads(row[0]).get("idea_id")
+            except (TypeError, ValueError):
+                continue
+            if idea_id:
+                outcomes[str(idea_id)] = approved
+    return outcomes
+
+
 def ideas_frame(conn: sqlite3.Connection, *, days: int = 365, limit: int = 500) -> pd.DataFrame:
     since = dt.date.today() - dt.timedelta(days=days)
+    risk = risk_outcomes(conn)
     rows = [
         {
             "id": idea.id, "as_of": idea.as_of, "ticker": idea.ticker,
             "class": idea.idea_class.value, "conviction": idea.conviction.value,
             "direction": idea.direction.value, "score": _f(idea.composite_score),
-            "accepted": not idea.rejected_by_rules,
+            "accepted": (not idea.rejected_by_rules) and risk.get(idea.id) is True,
+            "rules_ok": not idea.rejected_by_rules,
+            "risk_ok": risk.get(idea.id),
             "rejections": len(idea.rejected_by_rules),
             "has_memo": idea.memo is not None,
         }
@@ -337,7 +372,7 @@ def ideas_frame(conn: sqlite3.Connection, *, days: int = 365, limit: int = 500) 
     ]
     return pd.DataFrame(rows) if rows else pd.DataFrame(
         columns=["id", "as_of", "ticker", "class", "conviction", "direction", "score",
-                 "accepted", "rejections", "has_memo"]
+                 "accepted", "rules_ok", "risk_ok", "rejections", "has_memo"]
     )
 
 
@@ -530,3 +565,163 @@ def audit_counts(conn: sqlite3.Connection) -> pd.DataFrame:
     counts = audit.counts_by_event(conn)
     rows = [{"event": event, "count": count} for event, count in sorted(counts.items())]
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["event", "count"])
+
+# ---------------------------------------------------------------- one ticker
+
+
+@dataclass(frozen=True, slots=True)
+class TickerVerdict:
+    """What the system says about one ticker, and why.
+
+    Never a bare signal. `stance` is derived from decisions the pipeline already
+    made — it applies no threshold of its own — and every stance carries the
+    reasons behind it plus, where the memo supplies one, what would falsify it.
+    A ticker the pipeline has not scored gets NOT SCORED rather than a guess:
+    the honest answer to "should I buy this" is sometimes "this system has no
+    opinion".
+    """
+
+    ticker: str
+    stance: str                       # BUY | HOLD | AVOID | NOT SCORED
+    headline: str
+    as_of: dt.date | None = None
+    composite: float | None = None
+    conviction: str | None = None
+    horizon_days: int | None = None
+    reasons: tuple[str, ...] = ()
+    blockers: tuple[str, ...] = ()
+    falsifier: str | None = None
+    thesis: str | None = None
+
+    @property
+    def ready_to_buy(self) -> bool:
+        return self.stance == "BUY"
+
+
+def searchable_tickers(conn: sqlite3.Connection) -> list[str]:
+    return repo.tickers_with_bars(conn)
+
+
+def latest_idea_for(conn: sqlite3.Connection, ticker: str, *, days: int = 365) -> Idea | None:
+    since = dt.date.today() - dt.timedelta(days=days)
+    matches = [i for i in repo.get_ideas(conn, since=since, limit=2000) if i.ticker == ticker]
+    return max(matches, key=lambda i: i.as_of) if matches else None
+
+
+def price_frame(conn: sqlite3.Connection, ticker: str, *, days: int = 365) -> pd.DataFrame:
+    bars = repo.get_bars(conn, ticker)
+    rows = [
+        {"date": b.date, "close": _f(b.adjusted_close), "volume": int(b.volume or 0)}
+        for b in bars[-days:]
+    ]
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["date", "close", "volume"])
+
+
+def ticker_stats(conn: sqlite3.Connection, ticker: str) -> dict[str, Any]:
+    """Deterministic statistics, computed by the same indicators the technical
+    module scores with — not a second implementation."""
+    from ..analysis import indicators
+
+    bars = repo.get_bars(conn, ticker)
+    if not bars:
+        return {}
+    closes = indicators.to_series([_f(b.adjusted_close) for b in bars])
+    highs = indicators.to_series([_f(b.high) for b in bars])
+    lows = indicators.to_series([_f(b.low) for b in bars])
+    volumes = indicators.to_series([float(b.volume or 0) for b in bars])
+
+    def last(series: pd.Series) -> float | None:
+        value = series.dropna()
+        return float(value.iloc[-1]) if len(value) else None
+
+    latest = _f(bars[-1].adjusted_close)
+    sma50, sma200 = last(indicators.sma(closes, 50)), last(indicators.sma(closes, 200))
+    return {
+        "last_close": latest,
+        "last_bar": bars[-1].date,
+        "bars": len(bars),
+        "rsi14": last(indicators.rsi(closes)),
+        "sma50": sma50,
+        "sma200": sma200,
+        "above_sma200": None if sma200 is None else latest > sma200,
+        "atr14": last(indicators.atr(highs, lows, closes)),
+        "momentum_12_1": indicators.momentum_12_1(closes),
+        "realised_vol": indicators.realised_volatility(closes),
+        "volume_z": indicators.volume_zscore(volumes),
+        "drawdown": indicators.drawdown_from_peak(closes),
+    }
+
+
+def _risk_reasons(conn: sqlite3.Connection, idea_id: str) -> tuple[str, ...]:
+    for row in conn.execute(
+        "SELECT payload FROM audit WHERE event = ? ORDER BY id DESC",
+        (audit.AuditEvent.RISK_CHECK_FAILED,),
+    ):
+        try:
+            payload = json.loads(row[0])
+        except (TypeError, ValueError):
+            continue
+        if payload.get("idea_id") == idea_id:
+            return tuple(str(r) for r in payload.get("reasons", ()))
+    return ()
+
+
+def verdict_for(conn: sqlite3.Connection, ticker: str) -> TickerVerdict:
+    """Turn the pipeline's own decisions into a readable answer.
+
+    Applies no scoring of its own. Every branch here reads a decision some other
+    layer already recorded, which is what keeps this page from becoming a second
+    opinion that can disagree with the brief.
+    """
+    item = latest_idea_for(conn, ticker)
+    if item is None:
+        return TickerVerdict(
+            ticker=ticker, stance="NOT SCORED",
+            headline="This system has not scored this ticker.",
+            reasons=("No idea has been generated for it in the last year. It may not be "
+                     "in a configured universe, or its data may have failed a quality check.",),
+        )
+
+    blockers = tuple(f"rules layer: {code}" for code in item.rejected_by_rules)
+    # From the audit trail, not item.risk — see risk_outcomes().
+    approved = risk_outcomes(conn).get(item.id)
+    if approved is False:
+        blockers += tuple(f"risk layer: {reason}" for reason in _risk_reasons(conn, item.id)) \
+            or ("risk layer: refused",)
+    elif approved is None:
+        blockers += ("risk layer: not evaluated for this idea",)
+
+    reasons = tuple(
+        f"{signal.module}: {_f(signal.score):.0f}/100" for signal in item.signals
+    )
+    memo = item.memo
+    common = {
+        "ticker": ticker, "as_of": item.as_of,
+        "composite": _f(item.composite_score),
+        "conviction": item.conviction.value,
+        "horizon_days": memo.horizon_days if memo else None,
+        "reasons": reasons, "blockers": blockers,
+        "falsifier": memo.invalidation if memo else None,
+        "thesis": memo.thesis if memo else None,
+    }
+
+    if blockers:
+        return TickerVerdict(
+            stance="AVOID",
+            headline="Scored, then refused — this is not a buy.",
+            **common,
+        )
+    if item.direction.value == "long":
+        return TickerVerdict(
+            stance="BUY",
+            headline="Cleared the rules layer and the risk layer.",
+            **common,
+        )
+    if item.direction.value == "avoid":
+        return TickerVerdict(
+            stance="AVOID", headline="The pipeline's direction on this is avoid.", **common)
+    return TickerVerdict(
+        stance="HOLD",
+        headline="Scored, but the pipeline commits to no direction.",
+        **common,
+    )

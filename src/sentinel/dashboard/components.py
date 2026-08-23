@@ -70,6 +70,11 @@ def shell_css(mode: str) -> str:
   .sx-hero {{ font-size: 48px; line-height: 1.05; font-weight: 600; color: {p.ink};
       margin: 0; font-variant-numeric: proportional-nums; }}
   .sx-tile-delta {{ font-size: 12px; margin: 3px 0 0; }}
+  .sx-verdict {{ border-left: 4px solid {p.border}; background: {p.surface};
+      border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 4px 0 6px; }}
+  .sx-verdict-stance {{ font-size: 22px; font-weight: 700; margin: 0;
+      letter-spacing: -0.01em; }}
+  .sx-verdict-why {{ font-size: 13px; color: {p.ink_muted}; margin: 2px 0 0; }}
   .sx-badge {{ display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
       padding: 3px 9px; border-radius: 999px; border: 1px solid {p.border};
       background: {p.surface}; color: {p.ink_secondary}; }}
@@ -134,3 +139,21 @@ def status_for_age(age_days: int) -> str:
     if age_days <= 1:
         return "good"
     return "warning" if age_days <= 4 else "critical"
+
+def verdict_banner(stance: str, headline: str, *, status: str | None = None,
+                   mode: str = "light") -> str:
+    """The search page's answer, with its reason attached in the same block.
+
+    Deliberately one component rather than a badge plus a caption: the spec's
+    rule is that a signal never travels without its reasoning, and two separate
+    elements can be separated by a later layout change. Here the headline cannot
+    be rendered without the sentence that qualifies it.
+    """
+    p = pal.get(mode)
+    colour = p.status.get(status or "", p.ink_muted)
+    return (
+        f'<div class="sx-verdict" style="border-left-color:{colour}">'
+        f'<p class="sx-verdict-stance" style="color:{colour}">{html.escape(stance)}</p>'
+        f'<p class="sx-verdict-why">{html.escape(headline)}</p></div>'
+    )
+
