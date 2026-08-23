@@ -5,7 +5,15 @@ __pycache__/
 .coverage
 htmlcov/
 .env
-data/
+
+# Runtime output only. These are ANCHORED with a leading slash on purpose: a bare
+# `data/` matches a directory of that name at ANY depth, and it silently
+# swallowed the whole of src/sentinel/data/ — the vendor adapters and the quality
+# checks — so the package was absent from the repository while every local test
+# still passed against the working tree.
+/data/
+/briefs/
 *.sqlite
 *.sqlite-journal
-uv.lock.bak
+*.sqlite-wal
+*.sqlite-shm

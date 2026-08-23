@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -349,7 +350,7 @@ def backtest(
     from .backtest import (
         BacktestConfig, benchmarks, random_portfolios, round_trip_drag, run_walk_forward,
     )
-    from .backtest.costs import CostModel
+    from .costs import CostModel
     from .evals.metrics import summarise
     from .storage import repo
 
@@ -536,6 +537,76 @@ def notify_test(config_path: Optional[str] = typer.Option(None, "--config")) -> 
             f"[dim]ntfy topic is {config.notify.ntfy_topic!r} — anyone who knows it can "
             f"publish to it, so make it long and unguessable.[/]"
         )
+
+
+@app.command()
+def dashboard(
+    port: int = typer.Option(8501, "--port"),
+    address: str = typer.Option("localhost", "--address",
+                                help="Bind address. Anything non-loopback requires a password."),
+    theme: str = typer.Option("light", "--theme", help="light | dark"),
+    config_path: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Launch the read-only Streamlit dashboard.
+
+    Binding to a loopback address marks the session local, which is the only way
+    the dashboard will serve without SENTINEL_DASHBOARD_PASSWORD. Bind anywhere
+    else without one and it refuses to render — an unprotected portfolio on a
+    network is the failure that policy exists to prevent.
+    """
+    import subprocess
+    import sys
+
+    config = _config(config_path)
+    if not Path(config.paths.db).exists():
+        console.print("[red]no database yet — run `sentinel init` and `sentinel ingest` first[/]")
+        raise typer.Exit(EXIT_FAILURE)
+
+    try:
+        import streamlit  # noqa: F401 - probing for the optional extra
+    except ImportError:
+        console.print(
+            "[red]streamlit is not installed.[/] Install the dashboard extra:\n"
+            "  uv sync --extra dashboard"
+        )
+        raise typer.Exit(EXIT_FAILURE) from None
+
+    from .dashboard import auth as dash_auth
+
+    is_local = address in ("localhost", "127.0.0.1", "::1")
+    env = dict(os.environ)
+    env["SENTINEL_DASHBOARD_THEME"] = theme
+    # Streamlit's ProgressColumn and widgets paint with primaryColor, which
+    # defaults to red. On "distance to stop" a long red bar reads as danger when
+    # a long bar is in fact the safe case, so it takes the palette's slot 1.
+    env.setdefault("STREAMLIT_THEME_PRIMARY_COLOR", "#2a78d6")
+    env.setdefault("STREAMLIT_THEME_BASE", "dark" if theme == "dark" else "light")
+    env["SENTINEL_DB"] = str(config.paths.db)
+    if config.source_path:
+        env["SENTINEL_CONFIG"] = str(config.source_path)
+    if is_local:
+        env[dash_auth.LOCAL_ENV] = "1"
+    else:
+        env.pop(dash_auth.LOCAL_ENV, None)
+        if not env.get(dash_auth.PASSWORD_ENV):
+            console.print(
+                f"[red]refusing to bind {address} without a password.[/] "
+                f"Set {dash_auth.PASSWORD_ENV} and try again."
+            )
+            raise typer.Exit(EXIT_FAILURE)
+
+    script = Path(__file__).parent / "dashboard" / "run.py"
+    console.print(f"[green]starting[/] http://{address}:{port}")
+    if not env.get(dash_auth.PASSWORD_ENV):
+        console.print(
+            f"[yellow]no {dash_auth.PASSWORD_ENV} set — local session only.[/]"
+        )
+    subprocess.run(
+        [sys.executable, "-m", "streamlit", "run", str(script),
+         "--server.port", str(port), "--server.address", address,
+         "--server.headless", "true", "--browser.gatherUsageStats", "false"],
+        env=env, check=False,
+    )
 
 
 @app.command()

@@ -34,11 +34,32 @@ def dec(value: object) -> Decimal:
 
     ``Decimal(0.1)`` is 0.1000000000000000055511151231257827; ``dec(0.1)`` is
     ``Decimal("0.1")``. Vendor JSON hands us floats, so this is the front door.
+
+    NumPy scalars need the same treatment but cannot take the same route:
+    ``repr(numpy.float64(1.0))`` is the string ``"np.float64(1.0)"`` on NumPy 2,
+    which ``Decimal`` rejects outright. Anything that is not already a Decimal,
+    an int or a string but *is* float-like goes through ``float()`` first — which
+    is exact, since a float64 already is a Python float — and then through the
+    same shortest-round-trip ``repr``.
     """
     if isinstance(value, Decimal):
         return value
+    if isinstance(value, bool):
+        raise TypeError("refusing to treat a bool as a monetary amount")
     if isinstance(value, float):
-        return Decimal(repr(value))
+        # `float(value)` is what makes this safe for numpy: np.float64 SUBCLASSES
+        # float, so it lands here, and repr() on the subclass yields
+        # "np.float64(1.0)". Converting first is exact — a float64 already is a
+        # Python float — and restores the shortest round-tripping repr.
+        return Decimal(repr(float(value)))
+    if isinstance(value, int):
+        return Decimal(int(value))
+    if isinstance(value, str):
+        return Decimal(value)
+    if hasattr(value, "__index__"):
+        return Decimal(int(value))          # numpy integer types
+    if hasattr(value, "__float__"):
+        return Decimal(repr(float(value)))
     return Decimal(str(value))
 
 

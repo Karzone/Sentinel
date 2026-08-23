@@ -21,7 +21,7 @@ from typing import Mapping, Sequence
 
 from ..domain.models import Bar
 from ..money import dec
-from .costs import CostModel, compute
+from ..costs import CostModel, compute
 from .engine import trading_dates
 
 BENCHMARKS_VERSION = "benchmarks-v1"

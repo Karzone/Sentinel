@@ -7,8 +7,9 @@ from decimal import Decimal
 
 import pytest
 
-from sentinel.backtest import benchmarks, costs as costs_mod, engine as bt
-from sentinel.backtest.costs import CostModel
+from sentinel import costs as costs_mod
+from sentinel.backtest import benchmarks, engine as bt
+from sentinel.costs import CostModel
 from sentinel.domain import Bar, IdeaClass, PositionStatus
 from sentinel.evals import calibration, metrics, signal_quality
 from sentinel.money import FxRates

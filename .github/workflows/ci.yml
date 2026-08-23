@@ -1,0 +1,60 @@
+name: CI
+
+# The whole repository is one Python package, so there is nothing to path-filter:
+# every push runs the same gate. That is a deliberate simplification over the
+# split this code carried when it lived inside a larger repo — filtering exists to
+# stop a Python change from paying for a .NET build, and there is no .NET here.
+#
+# The suite is hermetic by construction: the fixture provider generates every
+# price, fundamental and news item from a hash of the ticker, so there is no
+# vendor key, no network call and no flake. If a test needs a key, it is the
+# wrong test.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Never on main: every commit on the default branch needs its own verdict.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --python 3.12 --frozen --extra dashboard
+
+      - name: Tests
+        run: uv run pytest -q
+
+      # The risk layer is the highest-consequence code here and M3 sets its bar
+      # at 100% branch coverage. Enforced rather than trusted: the spec's kill
+      # criteria pre-commit that a risk-layer bypass bug suspends real-money
+      # usage, so an untested branch is not a gap in a report — it is a
+      # suspended system.
+      - name: Risk layer must stay at 100% branch coverage
+        run: |
+          uv run --with pytest-cov pytest -q tests/test_risk.py \
+            --cov=sentinel.risk --cov-branch --cov-fail-under=100 --cov-report=term-missing
+
+      # The pipeline must run end to end with no vendor keys and no network.
+      # This is the check that catches wiring bugs the unit tests cannot see —
+      # it is how the config attribute mismatch in pipeline.portfolio_state was
+      # found in the first place.
+      - name: Offline end-to-end smoke
+        run: |
+          cd "$(mktemp -d)"
+          uv run --project "$GITHUB_WORKSPACE" sentinel init
+          uv run --project "$GITHUB_WORKSPACE" sentinel ingest --universe demo --history 500
+          uv run --project "$GITHUB_WORKSPACE" sentinel brief --universe demo
+          uv run --project "$GITHUB_WORKSPACE" sentinel paper status
+          test -s data/briefs/*.md

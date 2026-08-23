@@ -32,7 +32,7 @@ from ..money import FxRates, dec
 from ..portfolio.ledger import ClosedTrade, EquityPoint, InsufficientCash, Ledger, apply_exits
 from ..risk import PortfolioState, RiskEngine
 from ..risk.sizing import SizingCap, size
-from .costs import CostModel
+from ..costs import CostModel
 
 BACKTEST_VERSION = "backtest-v1"
 

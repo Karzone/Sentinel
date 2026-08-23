@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Mapping, Sequence
 
-from ..backtest.costs import CostModel, TradeCosts, compute
+from ..costs import CostModel, TradeCosts, compute
 from ..domain.enums import IdeaClass, PositionStatus
 from ..domain.models import Fill, Position
 from ..money import GBP, FxRates, dec

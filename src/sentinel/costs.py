@@ -1,5 +1,12 @@
 """UK dealing costs.
 
+Lives at the package root rather than under ``backtest/`` because the cost
+model is shared: the live paper ledger pays these charges too, and having the
+ledger reach into ``backtest`` for them created an import cycle
+(portfolio.ledger -> backtest.__init__ -> backtest.engine -> portfolio.ledger)
+that only surfaced when ``sentinel.portfolio`` was imported first. Costs are a
+property of dealing, not of simulating.
+
 A backtest without these is a fiction, and specifically a *flattering* fiction:
 every one of these charges is asymmetric against turnover, so omitting them
 makes a high-turnover strategy look better than a low-turnover one — which is
@@ -33,7 +40,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 
-from ..money import GBP, dec
+from .money import GBP, dec
 
 COSTS_VERSION = "costs-v1"
 

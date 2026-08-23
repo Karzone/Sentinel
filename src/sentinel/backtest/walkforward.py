@@ -23,7 +23,7 @@ from typing import Callable, Mapping, Sequence
 from ..config import RiskLimits
 from ..domain.models import Bar
 from ..money import FxRates
-from .costs import CostModel
+from ..costs import CostModel
 from .engine import BacktestConfig, BacktestResult, Ranker, run, trading_dates
 
 WALKFORWARD_VERSION = "walkforward-v1"

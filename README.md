@@ -12,7 +12,6 @@ It does **not** place orders. It never will — see [the one hard rule](#the-one
 ## Quick start
 
 ```bash
-cd sentinel
 uv sync                       # Python 3.12, deps pinned in uv.lock
 cp .env.example .env          # vendor keys; every one is optional
 uv run sentinel init          # creates sentinel.toml + the SQLite db
@@ -42,6 +41,7 @@ mandatory 6-month paper period gates any real-money use of short-term signals.
 | `sentinel backtest` | Walk-forward backtest with UK costs, vs B1–B4 |
 | `sentinel evals` | Signal-quality, calibration and performance evals |
 | `sentinel notify test` | Send one test message down each notification channel |
+| `sentinel dashboard` | Launch the read-only Streamlit dashboard |
 
 ## Layout
 
@@ -59,6 +59,7 @@ src/sentinel/
   evals/         performance, calibration and signal-quality evals
   brief/         daily brief + weekly review renderers
   notify/        scheduled digest vs event-driven push (kept strictly apart)
+  dashboard/     read-only Streamlit dashboard (validated palette, no writes)
 ```
 
 ## Design rules that are not negotiable
@@ -77,5 +78,6 @@ src/sentinel/
 
 ## Status
 
-Phases 0–5 of `specs/sentinel.md` are implemented and tested. Phase 6's Streamlit dashboard
-is **not built** — see the "Not built yet" section of the spec for the exact gap.
+Phases 0–6 of `specs/sentinel.md` are implemented and tested. See the spec's
+"Not built yet" section for the gaps that remain — chiefly that no live vendor or
+LLM call has been made from this code yet.

@@ -1,0 +1,14 @@
+# Streamlit chrome only. The chart palette lives in src/sentinel/dashboard/palette.py
+# and is validated there; this file exists so `streamlit run` picks up the same
+# accent when it is launched directly rather than through `sentinel dashboard`.
+[theme]
+# ProgressColumn and widgets paint with primaryColor. Its default is red, which
+# on a "distance to stop" bar reads as danger when a long bar is the safe case.
+primaryColor = "#2a78d6"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false
