@@ -1,0 +1,47 @@
+[Unit]
+Description=Sentinel dashboard, published through a Cloudflare tunnel
+Documentation=https://github.com/Karzone/Sentinel
+# A tunnel with no route comes up as a public 502, so wait for the network
+# rather than restart-looping through boot.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Long-running, unlike the daily and weekly units: this one serves.
+Type=simple
+# Adjust these for your machine.
+User=%i
+WorkingDirectory=/home/%i/sentinel
+Environment=SENTINEL_HOME=/home/%i/sentinel
+Environment=SENTINEL_DASHBOARD_PORT=8501
+
+# THE PASSWORD IS THE ONLY THING PROTECTING THE PORTFOLIO ON A PUBLIC URL.
+# Keep it out of this file, which is world-readable in /etc/systemd/system.
+# Put SENTINEL_DASHBOARD_PASSWORD in a root-owned 0600 file instead:
+#   printf 'SENTINEL_DASHBOARD_PASSWORD=%%s\n' "$(openssl rand -base64 24)" \
+#     > /etc/sentinel/dashboard.env && chmod 600 /etc/sentinel/dashboard.env
+EnvironmentFile=/etc/sentinel/dashboard.env
+# For a stable hostname behind Cloudflare Access, add the tunnel's name here
+# and `cloudflared tunnel login` first. Omitted, the script opens a quick
+# tunnel whose trycloudflare.com URL changes on every restart.
+# Environment=CLOUDFLARE_TUNNEL_NAME=sentinel
+
+ExecStart=/home/%i/sentinel/deploy/sentinel-tunnel.sh
+
+# This one SHOULD come back: a dropped tunnel or an OOM-killed Streamlit is a
+# transient the script cannot fix from inside, and the script refuses to start
+# without a password, so a restart loop cannot degrade into an open dashboard.
+Restart=on-failure
+RestartSec=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/%i/sentinel
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

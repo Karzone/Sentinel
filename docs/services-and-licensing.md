@@ -33,6 +33,7 @@ run offline with an empty `.env`.
 | Resend | Transactional mail for the daily digest | **Free** | 3,000/month, 100/day | $0 — **not configured** |
 | ntfy.sh | Mobile push for stop / kill-switch / pipeline events | **Free** | no account; the topic is the only credential | $0 |
 | GitHub Actions | CI | **Free** (private repo) | 2,000 min/month | $0 |
+| Cloudflare Tunnel (`cloudflared`) | Publishes the loopback dashboard on an HTTPS hostname without opening a port. Optional; not required to run anything | **Free** | quick tunnels are rate-limited and get a random hostname; a named tunnel needs a free Cloudflare account + a domain | $0 |
 
 Budget guidance from the spec: start at **£40–70/month** total (one
 price+fundamentals vendor, Finnhub free, Anthropic usage). Do not buy more until
@@ -41,6 +42,16 @@ the Phase 4 evals justify it.
 **The ntfy topic is the only credential protecting the push channel.** Anyone who
 knows it can publish to it, so make it long and unguessable rather than
 `sentinel`.
+
+**A tunnel makes the dashboard password load-bearing, not advisory.** The gate
+serves without one only when the launcher says the session is local, which it
+infers from a loopback bind — and a tunnel republishes exactly that origin. So
+`sentinel dashboard --tunnel` binds loopback as usual but refuses to start
+without `SENTINEL_DASHBOARD_PASSWORD`, and `deploy/sentinel-tunnel.sh` checks
+again before starting either process. `cloudflared` sees the connection, never
+the database: no data is copied to Cloudflare. A named tunnel can additionally
+sit behind Cloudflare Access, which is a second lock rather than a replacement
+for the first.
 
 ## Open-source licences
 

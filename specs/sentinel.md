@@ -118,6 +118,18 @@ when it binds to a loopback address. A container, a VPS or Streamlit Community C
 it. The alternative (default open, warn in the UI) fails in the one direction that matters: a
 banner nobody reads is not an access control.
 
+**A tunnel revokes the local inference (`cli.serves_as_local`).** The flag above is sound only
+while loopback means "reachable from this machine and nowhere else", and cloudflared, tailscale
+funnel and ngrok all connect to a loopback origin and republish it publicly. So
+`cloudflared --url http://localhost:8501` in front of a default `sentinel dashboard` would serve
+the entire portfolio, password-free, to anyone with the URL — under a notice reading "Running
+locally". `sentinel dashboard --tunnel` is how the operator states the premise no longer holds: it
+keeps the loopback bind a tunnel needs, but stops that bind implying safety, so a password becomes
+mandatory and the launcher refuses without one. `deploy/sentinel-tunnel.sh` checks again before
+starting either process, since a systemd unit that fails at the second has already opened the
+first. Generalise: an access control that infers safety from a network fact is only as good as the
+fact, and tunnels are built to falsify this one.
+
 **No statistics are re-derived in the dashboard.** Hit rates, calibration and Brier come from
 `evals/` — the same code the CLI and the weekly review use. A dashboard that computed its own
 version of a hit rate would eventually disagree with the eval that gates real money, and the wrong

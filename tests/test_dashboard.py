@@ -670,3 +670,53 @@ class TestStreamlitExecutionMode:
         warning = pages_directory_warning(script)
         assert warning is not None
         assert "v1 multi-page app" in warning
+
+
+class TestTunnelIsNotALocalSession:
+    """A loopback bind implies "nobody else can reach this" only until a tunnel
+    republishes it. `auth.decide` grants unprotected access on exactly that
+    inference, so `cloudflared --url http://localhost:8501` in front of a plain
+    `sentinel dashboard` would serve the whole portfolio, password-free, to
+    anyone with the URL — under a sidebar notice reading "Running locally".
+    """
+
+    def test_loopback_alone_still_counts_as_local(self):
+        from sentinel.cli import serves_as_local
+
+        for address in ("localhost", "127.0.0.1", "::1"):
+            assert serves_as_local(address, tunnel=False) is True
+
+    def test_a_tunnel_revokes_that_however_local_the_bind_looks(self):
+        from sentinel.cli import serves_as_local
+
+        for address in ("localhost", "127.0.0.1", "::1"):
+            assert serves_as_local(address, tunnel=True) is False
+
+    def test_a_public_bind_was_never_local_with_or_without_a_tunnel(self):
+        from sentinel.cli import serves_as_local
+
+        assert serves_as_local("0.0.0.0", tunnel=False) is False
+        assert serves_as_local("0.0.0.0", tunnel=True) is False
+
+    def test_the_gate_then_refuses_to_serve_without_a_password(self):
+        """The two halves joined up: --tunnel makes is_local False, and a
+        non-local session with no password is refused, not warned."""
+        from sentinel.cli import serves_as_local
+
+        is_local = serves_as_local("127.0.0.1", tunnel=True)
+        decision = auth.decide(
+            configured_password=None, submitted=None, is_local=is_local
+        )
+        assert decision.outcome == "refused"
+        assert not decision.may_render
+
+    def test_a_password_is_demanded_rather_than_assumed_valid(self):
+        from sentinel.cli import serves_as_local
+
+        is_local = serves_as_local("127.0.0.1", tunnel=True)
+        assert auth.decide(configured_password="s3cret", submitted=None,
+                           is_local=is_local).outcome == "prompt"
+        assert auth.decide(configured_password="s3cret", submitted="wrong",
+                           is_local=is_local).outcome == "rejected"
+        assert auth.decide(configured_password="s3cret", submitted="s3cret",
+                           is_local=is_local).outcome == "granted"

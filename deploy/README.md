@@ -130,3 +130,97 @@ system can say — the pre-committed answer to "should this money just be indexe
 
 `SENTINEL_REVIEW_WEEKS` (default `1`) widens the window if you want a monthly
 retrospective from the same command.
+
+---
+
+# Reaching the dashboard from anywhere (Cloudflare tunnel)
+
+`sentinel dashboard` binds loopback, so it is reachable only from the machine it
+runs on. A tunnel republishes that origin on an HTTPS hostname without opening a
+port, forwarding a port on your router, or copying the database anywhere. The
+data stays on your machine; Cloudflare only carries the connection.
+
+## Read this before you start it
+
+**A loopback bind is what tells the password gate "nobody else can reach this",
+and a tunnel is exactly the thing that makes that false.** Run
+`cloudflared --url http://localhost:8501` in front of a plain `sentinel
+dashboard` and the whole portfolio is served to anyone with the URL, with no
+password, under a sidebar notice reading *"Running locally"*. That is not
+hypothetical — it is what the default flags do.
+
+So the dashboard has a `--tunnel` flag. It changes nothing about the bind — a
+tunnel needs a loopback origin — only whether that origin is allowed to imply
+safety. With it, `SENTINEL_DASHBOARD_PASSWORD` becomes mandatory and the
+launcher refuses to start without one. **Always use it, or the script that does
+it for you.**
+
+```bash
+sentinel dashboard --tunnel          # refuses: no password set
+```
+
+## Setup
+
+```bash
+# 1. cloudflared
+#    macOS:  brew install cloudflared
+#    Debian: see https://pkg.cloudflare.com — the repo, not a loose .deb
+
+# 2. A password. It is the only thing between the URL and your positions.
+sudo mkdir -p /etc/sentinel
+printf 'SENTINEL_DASHBOARD_PASSWORD=%s\n' "$(openssl rand -base64 24)" \
+  | sudo tee /etc/sentinel/dashboard.env >/dev/null
+sudo chmod 600 /etc/sentinel/dashboard.env
+
+# 3. Try it in the foreground first.
+set -a; . /etc/sentinel/dashboard.env; set +a
+./deploy/sentinel-tunnel.sh
+```
+
+The quick tunnel prints a `https://<random-words>.trycloudflare.com` URL into
+`logs/tunnel-<date>.log`. Open it, and you should get the password prompt — not
+the dashboard. If you get the dashboard, stop immediately: `--tunnel` was not
+passed.
+
+## Leaving it running
+
+```bash
+sudo cp deploy/sentinel-tunnel.service /etc/systemd/system/sentinel-tunnel@.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now sentinel-tunnel@$USER
+journalctl -u sentinel-tunnel@$USER -f
+```
+
+`Restart=on-failure` is deliberate here, unlike the daily and weekly units: a
+dropped tunnel is a transient the script cannot fix from inside. A restart loop
+cannot degrade into an open dashboard, because the script refuses to start
+without a password at all.
+
+## Quick tunnel vs named tunnel
+
+The quick tunnel needs no Cloudflare account, but its hostname changes on every
+restart and the only access control is the app password. For anything you intend
+to keep:
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create sentinel
+# route it at a hostname on your domain, then:
+sudo systemctl set-environment CLOUDFLARE_TUNNEL_NAME=sentinel
+```
+
+A named tunnel gives a stable hostname and lets **Cloudflare Access** sit in
+front — email or SSO before a request ever reaches your machine. That is a
+second, independent lock; the app password stays regardless, because a tunnel
+misconfiguration should not be a single point of failure for your portfolio.
+
+## What the script guarantees
+
+- Nothing starts without a password — not the dashboard, not cloudflared.
+- `uv` and `cloudflared` are proven **executable** before anything is served, so
+  a wrong `CLOUDFLARED_BIN` cannot leave a served origin with no tunnel.
+- The tunnel opens only after the origin answers `/_stcore/health`, so the first
+  visitor never meets a 502.
+- The two processes share a fate: whichever dies takes the other with it.
+
+These are tested in `tests/test_tunnel.py` against fake binaries, offline.

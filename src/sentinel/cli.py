@@ -624,6 +624,28 @@ def notify_failure(
     raise typer.Exit(EXIT_OK if result.delivered or not result.configured else EXIT_FAILURE)
 
 
+def serves_as_local(address: str, *, tunnel: bool) -> bool:
+    """Whether this bind may serve the portfolio without a password.
+
+    ``auth.decide`` grants unprotected access on exactly one signal: the
+    launcher saying "this is a local session", which it says when the bind
+    address is loopback. That inference is sound only while loopback means
+    "reachable from this machine and nowhere else" — and a tunnel is precisely
+    the thing that makes it false. cloudflared, tailscale funnel and ngrok all
+    connect to a LOOPBACK origin and republish it on the internet, so
+    ``cloudflared --url http://localhost:8501`` in front of a default
+    ``sentinel dashboard`` would serve the whole portfolio to anyone with the
+    URL, password-free, under a sidebar notice reading "Running locally".
+    That is the exact failure the fail-closed gate exists to prevent, arrived
+    at from the other side.
+
+    ``--tunnel`` is how the operator states that the premise no longer holds.
+    It does not change the bind address — a tunnel NEEDS a loopback origin —
+    only whether that address is allowed to imply safety.
+    """
+    return address in ("localhost", "127.0.0.1", "::1") and not tunnel
+
+
 def pages_directory_warning(script: Path) -> str | None:
     """Warn when a ``pages`` directory sits beside the dashboard entry script.
 
@@ -659,6 +681,11 @@ def dashboard(
     port: int = typer.Option(8501, "--port"),
     address: str = typer.Option("localhost", "--address",
                                 help="Bind address. Anything non-loopback requires a password."),
+    tunnel: bool = typer.Option(
+        False, "--tunnel",
+        help="Serve behind a tunnel (cloudflared / tailscale funnel). Keeps the "
+             "loopback bind the tunnel needs, but stops it counting as local, "
+             "so a password becomes mandatory."),
     theme: str = typer.Option("light", "--theme", help="light | dark"),
     config_path: Optional[str] = typer.Option(None, "--config"),
 ) -> None:
@@ -688,7 +715,7 @@ def dashboard(
 
     from .dashboard import auth as dash_auth
 
-    is_local = address in ("localhost", "127.0.0.1", "::1")
+    is_local = serves_as_local(address, tunnel=tunnel)
     env = dict(os.environ)
     env["SENTINEL_DASHBOARD_THEME"] = theme
     # Streamlit's ProgressColumn and widgets paint with primaryColor, which
@@ -704,9 +731,13 @@ def dashboard(
     else:
         env.pop(dash_auth.LOCAL_ENV, None)
         if not env.get(dash_auth.PASSWORD_ENV):
+            reason = (
+                "refusing to serve through a tunnel without a password"
+                if tunnel else
+                f"refusing to bind {address} without a password"
+            )
             console.print(
-                f"[red]refusing to bind {address} without a password.[/] "
-                f"Set {dash_auth.PASSWORD_ENV} and try again."
+                f"[red]{reason}.[/] Set {dash_auth.PASSWORD_ENV} and try again."
             )
             raise typer.Exit(EXIT_FAILURE)
 

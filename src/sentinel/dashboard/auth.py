@@ -3,9 +3,12 @@
 The spec's requirement is "auth required before any non-local deployment", and
 the way that is honoured here is **fail-closed**: with no password configured
 the dashboard refuses to serve unless something has explicitly said "this is a
-local session". `sentinel dashboard` sets that flag when it binds to localhost;
-a container, a VPS or Streamlit Community Cloud will not have it, so an
-unprotected deployment stops rather than quietly exposing a portfolio.
+local session". `sentinel dashboard` sets that flag when it binds to localhost
+and is not being tunnelled; a container, a VPS or Streamlit Community Cloud
+will not have it, so an unprotected deployment stops rather than quietly
+exposing a portfolio. The tunnel exception exists because a loopback bind is
+evidence of isolation only until something republishes it — see
+`cli.serves_as_local`.
 
 The alternative — default open, warn in the UI — fails in the one direction that
 matters. A banner nobody reads is not an access control.
@@ -24,7 +27,11 @@ from typing import Literal
 AUTH_VERSION = "dashboard-auth-v1"
 
 PASSWORD_ENV = "SENTINEL_DASHBOARD_PASSWORD"
-#: Set by `sentinel dashboard` when it binds to a loopback address.
+#: Set by `sentinel dashboard` when it binds to a loopback address AND is not
+#: being tunnelled. The distinction matters: cloudflared and tailscale funnel
+#: connect to a loopback origin and republish it publicly, so the bind address
+#: alone stops being evidence of "only this machine can reach it". See
+#: `cli.serves_as_local`, which is the only thing that sets this.
 LOCAL_ENV = "SENTINEL_DASHBOARD_LOCAL"
 
 Outcome = Literal["granted", "prompt", "rejected", "refused"]
