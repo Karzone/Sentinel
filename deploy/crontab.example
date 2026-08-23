@@ -1,0 +1,27 @@
+# Sentinel daily brief — crontab alternative for systems without systemd.
+#
+# Prefer the systemd timer if you have one (deploy/sentinel-daily.timer). It
+# handles GMT/BST automatically and catches up after downtime; the two lines
+# below can do neither.
+#
+# Install with:  crontab -e
+#
+# CRON_TZ makes the schedule follow UK local time including the clock changes.
+# Without it, cron uses the system timezone and the brief silently shifts by an
+# hour twice a year. Supported by cronie and Vixie cron; NOT by busybox crond,
+# where you must set the whole machine's TZ instead.
+CRON_TZ=Europe/London
+
+# cron runs with a near-empty environment. The script resolves uv itself, but
+# give it a sane PATH anyway.
+PATH=/usr/local/bin:/usr/bin:/bin
+SENTINEL_HOME=/home/YOUR_USER/sentinel
+# SENTINEL_UNIVERSE=uk-large
+
+# 07:00, Monday to Friday. Weekends are omitted deliberately: EOD vendors
+# publish nothing then, so a weekend run mails you Friday's brief again.
+0 7 * * 1-5 /home/YOUR_USER/sentinel/deploy/sentinel-daily.sh >/dev/null 2>&1
+
+# The script logs to $SENTINEL_HOME/logs and pushes an alert on failure, so
+# there is nothing useful in cron's own mail. If you would rather have it,
+# drop the redirection above and set MAILTO.

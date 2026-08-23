@@ -539,6 +539,41 @@ def notify_test(config_path: Optional[str] = typer.Option(None, "--config")) -> 
         )
 
 
+@notify_app.command("failure")
+def notify_failure(
+    message: str = typer.Argument(..., help="What went wrong."),
+    config_path: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Push a pipeline-failure alert.
+
+    This exists for the scheduled runner. A cron job whose pipeline dies sends
+    nothing, and a morning with no brief looks exactly like a quiet morning with
+    no candidates — so the failure has to announce itself on the one channel
+    that means "act or review now".
+
+    It goes through the router rather than curling ntfy directly, so the alert is
+    recorded in the audit trail and obeys the same allow-list as every other
+    event.
+    """
+    config = _config(config_path)
+    from .domain.enums import NotifyEvent
+    from .notify import build_router
+
+    router = build_router(config)
+    result = router.push_event(
+        NotifyEvent.PIPELINE_FAILURE,
+        subject="Sentinel — pipeline failure",
+        body=f"{message}\n\nNo brief was produced. Check the runner log.",
+    )
+    console.print(
+        f"push ({result.channel}): "
+        + ("[green]sent[/]" if result.delivered else f"[yellow]{result.detail}[/]")
+    )
+    # A failed alert must not mask the failure it was reporting, but it also
+    # must not be silent: report it and exit non-zero so the runner logs both.
+    raise typer.Exit(EXIT_OK if result.delivered or not result.configured else EXIT_FAILURE)
+
+
 @app.command()
 def dashboard(
     port: int = typer.Option(8501, "--port"),

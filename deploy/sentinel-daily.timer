@@ -1,0 +1,25 @@
+[Unit]
+Description=Run the Sentinel daily brief on weekday mornings
+Documentation=https://github.com/Karzone/Sentinel
+
+[Timer]
+# 07:00 UK, weekdays only. Timezone= is why this is a systemd timer rather than
+# a crontab line: it follows GMT/BST automatically, so the brief keeps arriving
+# at 07:00 local through both clock changes without anyone editing anything.
+OnCalendar=Mon..Fri 07:00
+Timezone=Europe/London
+
+# Weekends are excluded because EOD vendors publish nothing on Saturday and
+# Sunday, so a weekend run re-scores Friday's data and mails you a brief you
+# have already read.
+
+# If the machine was asleep or off at 07:00, run once it wakes rather than
+# skipping the day entirely.
+Persistent=true
+
+# Vendors get a thundering herd at exactly 07:00:00 from every scheduler on
+# earth. A small jitter is politeness that costs nothing.
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

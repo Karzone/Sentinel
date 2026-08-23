@@ -164,9 +164,33 @@ Recorded so the gaps are known rather than discovered.
   integration the spec mentions for US names is not wired.
 - **Reddit / StockTwits sentiment.** The sentiment module accepts arbitrary text via `extra_texts`,
   but only news headlines are currently fed to it.
-- **Scheduling.** No cron or GitHub Action fires the daily brief; `sentinel brief --send` is
-  ready for one, and exits `2` on a data-quality block so a scheduler can tell "did not generate"
-  from "generated and said the data is bad".
+- **The weekly review is not scheduled and has no CLI entry point.** `brief/render.py::weekly_review`
+  exists and is tested, but nothing calls it — wiring `sentinel weekly` and a second timer is the
+  obvious next step. The *daily* brief is scheduled (see below).
+
+## 7a. Scheduling
+
+`deploy/` carries the scheduled runner: `sentinel-daily.sh` plus a systemd unit and timer, with a
+crontab example for machines without systemd. It runs **weekdays at 07:00 Europe/London** —
+weekends are excluded because EOD vendors publish nothing then, so a weekend run re-scores Friday
+and mails a brief already read.
+
+The script exists because the failure modes of a scheduled job are all *quiet* ones:
+
+* **A dead pipeline sends nothing**, and a morning with no brief is indistinguishable from a quiet
+  morning with no candidates — so a failure pushes a `PIPELINE_FAILURE` alert through the router
+  (`sentinel notify failure`), which keeps it on the audit trail and inside the push allow-list
+  rather than curling ntfy directly.
+* **Two runs writing one SQLite file** corrupts the audit trail, so the script takes a
+  non-blocking `flock`; a run that finds the lock held exits rather than queueing behind it.
+* **Exit 2 is not flattened into success.** The brief went out and carries its own stale-data
+  banner, but a monitor seeing `0` would never learn the run was incomplete.
+
+`Timezone=Europe/London` on the timer is why systemd is preferred over crontab: 07:00 stays 07:00
+through both clock changes with nothing to edit, and `Persistent=true` catches up after downtime.
+
+The runner's exit-code routing, locking and PATH repair are covered by `tests/test_deploy.py`
+against a fake `uv`, and the script has been run end-to-end against a real database.
 
 ## 8. Verification
 
