@@ -110,6 +110,114 @@ class TestFmp:
         assert fmp.assemble("DEMO.US", [], [], [], []) is None
 
 
+class TestFmpStableEndpoints:
+    """FMP retired /api/v3 for accounts created after 2025-08-31: it answers 403
+    "Legacy Endpoint" and nothing else. /stable renamed four of the fields the
+    snapshot needs, and takes the symbol as a query parameter rather than a path
+    segment. Both shapes are asserted because FMP_API_BASE can point back at v3
+    for a pre-cutoff account, and a rename that silently yields None is a
+    missing Piotroski input rather than a visible failure.
+
+    Field names below are recorded from a live /stable call on 2026-08-23.
+    """
+
+    INCOME = [
+        {"date": "2025-06-30", "filingDate": "2025-08-02", "revenue": 500_000_000,
+         "grossProfit": 210_000_000, "operatingIncome": 90_000_000,
+         "netIncome": 60_000_000, "epsDiluted": 0.6,
+         "weightedAverageShsOutDil": 100_000_000},
+        {"date": "2024-06-30", "filingDate": "2024-08-02", "revenue": 450_000_000,
+         "netIncome": 48_000_000, "epsDiluted": 0.48,
+         "weightedAverageShsOutDil": 100_000_000},
+    ]
+    BALANCE = [
+        {"date": "2025-06-30", "totalAssets": 900_000_000,
+         "totalCurrentAssets": 300_000_000, "totalCurrentLiabilities": 150_000_000,
+         "totalDebt": 200_000_000, "totalStockholdersEquity": 400_000_000},
+        {"date": "2024-06-30", "totalAssets": 850_000_000,
+         "totalCurrentAssets": 260_000_000, "totalCurrentLiabilities": 150_000_000,
+         "totalDebt": 220_000_000, "totalStockholdersEquity": 350_000_000},
+    ]
+    CASHFLOW = [{"date": "2025-06-30", "operatingCashFlow": 80_000_000,
+                 "freeCashFlow": 60_000_000}]
+    RATIOS = [{"priceToEarningsRatioTTM": 14.2, "enterpriseValueMultipleTTM": 9.1}]
+    PROFILE = [{"currency": "USD", "sector": "Technology", "marketCap": 1_000_000_000}]
+
+    def _assemble(self):
+        return fmp.assemble("DEMO.US", self.INCOME, self.BALANCE, self.CASHFLOW,
+                            self.RATIOS, profile=self.PROFILE)
+
+    def test_the_renamed_fields_are_read(self):
+        """The four /stable renames, asserted together: each one silently
+        yielding None is what a base-URL switch actually looks like."""
+        f = self._assemble()
+        assert f.as_of == dt.date(2025, 8, 2), "filingDate (v3 spelled it fillingDate)"
+        assert f.eps_ttm == Decimal("0.6"), "epsDiluted (v3: epsdiluted)"
+        assert f.market_cap == Decimal("1000000000"), "marketCap (v3: mktCap)"
+        assert f.pe_ratio == Decimal("14.2"), "priceToEarningsRatioTTM (v3: peRatioTTM)"
+
+    def test_the_unrenamed_fields_still_land(self):
+        f = self._assemble()
+        assert f.total_assets_prior == Decimal("850000000")
+        assert f.free_cash_flow_ttm == Decimal("60000000")
+        assert f.total_equity == Decimal("400000000")
+        assert f.eps_prior_ttm == Decimal("0.48")
+
+    def test_the_v3_spellings_still_parse(self):
+        """A pre-cutoff account can set FMP_API_BASE back to v3, where the old
+        names apply. The fallbacks are what keep that account working."""
+        f = TestFmp()._assemble()
+        assert f.as_of == dt.date(2024, 8, 2)
+        assert f.eps_ttm == Decimal("0.6")
+        assert f.market_cap == Decimal("1000000000")
+        assert f.pe_ratio == Decimal("14.2")
+
+    def test_the_symbol_travels_as_a_query_parameter(self):
+        """On /stable the symbol is a query parameter. Left as a path segment it
+        is a 404 on every ticker — the shape of the failure this port fixes."""
+        calls: list[tuple[str, dict]] = []
+
+        class _Client:
+            def get(self, url, params=None):
+                calls.append((url, dict(params or {})))
+                import httpx
+                return httpx.Response(
+                    200, json=[], request=httpx.Request("GET", url))
+
+            def close(self): pass
+
+        fmp.FmpProvider("tok", client=_Client()).fetch_fundamentals("NVDA.US")
+
+        assert calls, "no request was made"
+        paths = [url.rsplit("/", 1)[-1] for url, _ in calls]
+        assert paths == ["income-statement", "balance-sheet-statement",
+                         "cash-flow-statement", "ratios-ttm", "profile"]
+        for url, params in calls:
+            assert "NVDA" not in url, f"symbol is in the path: {url}"
+            assert params.get("symbol") == "NVDA", params
+            assert url.startswith(fmp.BASE_URL + "/")
+
+    def test_the_statement_endpoints_ask_for_a_prior_period(self):
+        """Without limit=2 there is no prior period, so every Piotroski input
+        that needs one goes None while the snapshot still looks complete."""
+        calls: list[tuple[str, dict]] = []
+
+        class _Client:
+            def get(self, url, params=None):
+                calls.append((url.rsplit("/", 1)[-1], dict(params or {})))
+                import httpx
+                return httpx.Response(
+                    200, json=[], request=httpx.Request("GET", url))
+
+            def close(self): pass
+
+        fmp.FmpProvider("tok", client=_Client()).fetch_fundamentals("NVDA.US")
+        by_path = dict(calls)
+        for path in ("income-statement", "balance-sheet-statement",
+                     "cash-flow-statement"):
+            assert by_path[path].get("limit") == 2, path
+
+
 class TestFinnhub:
     PAYLOAD = [
         {"datetime": 1704200000, "headline": "Company beats", "summary": "Good.",

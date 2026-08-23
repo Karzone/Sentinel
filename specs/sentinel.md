@@ -180,10 +180,16 @@ most damaging thing this repository could produce.
 
 Recorded so the gaps are known rather than discovered.
 
-- **Live vendor calls are unverified.** The adapters' *parsing* is unit-tested against recorded
-  payload shapes, and that is the half that harbours bugs — but no request has been made to EODHD,
-  FMP or Finnhub, so endpoint paths and auth are `UNVERIFIED`. `sentinel health` is where that is
-  found out.
+- **Live vendor calls are only partly verified.** EODHD prices and FMP fundamentals have now been
+  called for real (`sentinel ingest --universe ai`), which is how the FMP port below was forced;
+  Finnhub news is still `UNVERIFIED`. The adapters' *parsing* is unit-tested against recorded
+  payload shapes and that is the half that harbours bugs — but only a live call proves an endpoint
+  path, and `sentinel health` is where that is found out.
+  **FMP is on `/stable`, not `/api/v3`.** FMP retired v3 for accounts created after 2025-08-31: it
+  answers `403` with `"Legacy Endpoint"` and nothing else, on every request. `/stable` takes the
+  symbol as a **query parameter** rather than a path segment and renamed four fields
+  (`filingDate`, `epsDiluted`, `marketCap`, `priceToEarningsRatioTTM`). The adapter accepts both
+  spellings and `FMP_API_BASE` can point back at v3, so a pre-cutoff account still works.
 - **No live LLM call has been made.** The client is exercised end to end against a stub SDK
   (including the repair turn and the no-`temperature` behaviour), but there is no
   `ANTHROPIC_API_KEY` in this environment.

@@ -10,6 +10,7 @@ easiest thing in the file to get subtly wrong — are testable directly.
 from __future__ import annotations
 
 import datetime as dt
+import os
 from decimal import Decimal
 from typing import Any, Sequence
 
@@ -20,15 +21,29 @@ from ..domain.models import Fundamentals
 from ..money import dec
 from .base import ProviderError, currency_for, describe_http_error, redact
 
-BASE_URL = "https://financialmodelingprep.com/api/v3"
+# FMP retired /api/v3 for accounts created after 2025-08-31 — it answers 403
+# with "Legacy Endpoint" and nothing else. The stable API takes the symbol as a
+# QUERY PARAMETER rather than a path segment, and renamed four of the fields
+# below. Overridable so a pre-cutoff account can point back at v3, where the
+# older field names still apply and the fallbacks below cover them.
+BASE_URL = os.environ.get("FMP_API_BASE", "https://financialmodelingprep.com/stable")
 ADAPTER_VERSION = "fmp-v1"
 
 
-def _num(source: dict[str, Any] | None, key: str) -> Decimal | None:
+def _num(source: dict[str, Any] | None, *keys: str) -> Decimal | None:
+    """First of `keys` that is present and non-empty.
+
+    Several fields were renamed between /api/v3 and /stable, so both spellings
+    are accepted: the adapter keeps working for a legacy account pointed back at
+    v3 via FMP_API_BASE, and a rename is a missing number rather than a crash.
+    """
     if not source:
         return None
-    value = source.get(key)
-    return None if value in (None, "", "NA") else dec(value)
+    for key in keys:
+        value = source.get(key)
+        if value not in (None, "", "NA"):
+            return dec(value)
+    return None
 
 
 def _at(rows: Sequence[dict[str, Any]], index: int) -> dict[str, Any] | None:
@@ -56,7 +71,12 @@ def assemble(
     # `date` on an FMP statement is the period end. `fillingDate` (their
     # spelling) is when it became public — the only one of the two that is safe
     # to use as `as_of`, because scoring a period the day it ended is lookahead.
-    as_of_raw = (latest_income or {}).get("fillingDate") or (latest_income or {}).get("date")
+    income_row = latest_income or {}
+    # "filingDate" on /stable; "fillingDate" was v3's typo. Falling back to the
+    # period end only if neither is present — scoring a period the day it ended
+    # is lookahead, so the filing date is what we want.
+    as_of_raw = (income_row.get("filingDate") or income_row.get("fillingDate")
+                 or income_row.get("date"))
     try:
         as_of = dt.date.fromisoformat(str(as_of_raw)[:10])
     except (ValueError, TypeError):
@@ -71,11 +91,11 @@ def assemble(
         as_of=as_of,
         currency=(prof.get("currency") or currency_for(ticker)),
         sector=(prof.get("sector") or "").lower() or None,
-        market_cap=_num(prof, "mktCap"),
+        market_cap=_num(prof, "marketCap", "mktCap"),
         revenue_ttm=revenue,
         revenue_prior_ttm=_num(prior_income, "revenue"),
-        eps_ttm=_num(latest_income, "epsdiluted") or _num(latest_income, "eps"),
-        eps_prior_ttm=_num(prior_income, "epsdiluted") or _num(prior_income, "eps"),
+        eps_ttm=_num(latest_income, "epsDiluted", "epsdiluted", "eps"),
+        eps_prior_ttm=_num(prior_income, "epsDiluted", "epsdiluted", "eps"),
         gross_margin=_safe_ratio(_num(latest_income, "grossProfit"), revenue),
         operating_margin=_safe_ratio(_num(latest_income, "operatingIncome"), revenue),
         net_margin=_safe_ratio(net_income, revenue),
@@ -93,7 +113,7 @@ def assemble(
         shares_outstanding_prior=_num(prior_income, "weightedAverageShsOutDil"),
         net_income_ttm=net_income,
         net_income_prior_ttm=_num(prior_income, "netIncome"),
-        pe_ratio=_num(ratios, "peRatioTTM"),
+        pe_ratio=_num(ratios, "priceToEarningsRatioTTM", "peRatioTTM"),
         ev_ebitda=_num(ratios, "enterpriseValueMultipleTTM"),
     )
 
@@ -132,12 +152,13 @@ class FmpProvider:
 
     def fetch_fundamentals(self, ticker: str) -> Fundamentals | None:
         symbol = ticker.split(".")[0]
-        limit = {"limit": 2}
+        statement = {"symbol": symbol, "limit": 2}
+        one = {"symbol": symbol}
         return assemble(
             ticker,
-            self._get(f"income-statement/{symbol}", limit),
-            self._get(f"balance-sheet-statement/{symbol}", limit),
-            self._get(f"cash-flow-statement/{symbol}", limit),
-            self._get(f"ratios-ttm/{symbol}"),
-            profile=self._get(f"profile/{symbol}"),
+            self._get("income-statement", statement),
+            self._get("balance-sheet-statement", statement),
+            self._get("cash-flow-statement", statement),
+            self._get("ratios-ttm", one),
+            profile=self._get("profile", one),
         )
