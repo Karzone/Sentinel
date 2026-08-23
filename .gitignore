@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+data/
+*.sqlite
+*.sqlite-journal
+uv.lock.bak
