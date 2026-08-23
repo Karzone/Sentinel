@@ -9,13 +9,17 @@ spec for the thing it claims to check.
 from __future__ import annotations
 
 import datetime as dt
+import re
 import sqlite3
 from decimal import Decimal
 
 import pandas as pd
 import pytest
 
-from sentinel.dashboard import auth, charts, components as ui, palette as pal, queries
+from sentinel.dashboard import (
+    auth, charts, components as ui, palette as pal, queries, views,
+)
+from sentinel.evals import signal_quality
 from sentinel.domain import IdeaClass
 from sentinel.portfolio import Ledger
 from sentinel.storage import repo
@@ -529,3 +533,102 @@ class TestBarMarkSpec:
             pd.DataFrame([{"check": c, "count": 1} for c in "abcde"]),
             "light", field="check").to_dict()
         assert one["height"] < five["height"]
+
+
+# ---------------------------------------------------------------- evals page
+
+
+class _Recorder:
+    """A stand-in for the ``st`` module that records what a view rendered.
+
+    The evals-page bug lived between two widgets on one screen, so it could only
+    be caught by rendering the page and reading both numbers back. A test that
+    called the query functions directly would have passed throughout.
+    """
+
+    def __init__(self) -> None:
+        self.html: list[str] = []
+        self.captions: list[str] = []
+
+    # widgets the evals view touches
+    def markdown(self, body, **_kw) -> None:
+        self.html.append(str(body))
+
+    def caption(self, body, **_kw) -> None:
+        self.captions.append(str(body))
+
+    def divider(self) -> None:
+        pass
+
+    def columns(self, spec, **_kw) -> list["_Recorder"]:
+        count = spec if isinstance(spec, int) else len(spec)
+        return [self] * count
+
+    def expander(self, *_a, **_kw) -> "_Recorder":
+        return self
+
+    def altair_chart(self, *_a, **_kw) -> None:
+        pass
+
+    def dataframe(self, *_a, **_kw) -> None:
+        pass
+
+    def __enter__(self) -> "_Recorder":
+        return self
+
+    def __exit__(self, *_exc) -> bool:
+        return False
+
+    # readers
+    def tile_value(self, label: str) -> str:
+        for block in self.html:
+            if f">{label}<" in block:
+                return re.search(r'class="sx-tile-value">([^<]*)<', block).group(1)
+        raise AssertionError(f"no tile labelled {label!r} was rendered")
+
+    def tile_delta(self, label: str) -> str:
+        for block in self.html:
+            if f">{label}<" in block:
+                match = re.search(r'class="sx-tile-delta"[^>]*>([^<]*)<', block)
+                return match.group(1) if match else ""
+        raise AssertionError(f"no tile labelled {label!r} was rendered")
+
+
+class TestEvalsPage:
+    """The page whose whole job is honest measurement must not overstate itself."""
+
+    CALLS = [
+        signal_quality.DirectionalCall("DEMO1.LSE", "long", 0.05),
+        signal_quality.DirectionalCall("DEMO2.LSE", "long", -0.02),
+        signal_quality.DirectionalCall("DEMO3.US", "avoid", -0.04),
+        # Abstentions. They make no directional claim, so the verdict excludes
+        # them — and so must the tile that counts toward the same gate.
+        signal_quality.DirectionalCall("DEMO4.US", "flat", 0.01),
+        signal_quality.DirectionalCall("DEMO5.US", "flat", -0.01),
+    ]
+
+    @pytest.fixture()
+    def rendered(self, conn, config, monkeypatch) -> _Recorder:
+        monkeypatch.setattr(views.queries, "catalyst_calls", lambda *_a, **_kw: self.CALLS)
+        recorder = _Recorder()
+        views.evals(recorder, views.Context(conn=conn, config=config, mode="light"))
+        return recorder
+
+    def test_the_tile_counts_what_the_verdict_counts(self, rendered):
+        """The tile read 5 against a 100-sample gate the verdict had seen 3 of."""
+        verdicts = [c for c in rendered.captions if "calls [" in c]
+        assert verdicts, "the hit-rate verdict was never rendered"
+        counted_by_the_verdict = re.search(r"on (\d+) calls", verdicts[0]).group(1)
+        assert rendered.tile_value("Scoreable catalyst calls") == counted_by_the_verdict
+        assert counted_by_the_verdict == "3"
+
+    def test_the_excluded_abstentions_are_named_rather_than_silently_dropped(self, rendered):
+        """Two of five vanishing with no explanation is how a reader concludes
+        the tile is broken — or worse, does not notice."""
+        assert "2 flat not scored" in rendered.tile_delta("Scoreable catalyst calls")
+
+    def test_the_kill_criteria_count_the_same_calls_as_the_tile(self, rendered):
+        """Three widgets on one page, one definition of a sample."""
+        gate = [h for h in rendered.html if "samples needed for a verdict" in h]
+        assert gate, "the catalyst kill criterion was never rendered"
+        assert re.search(r"has (\d+) of the 100", gate[0]).group(1) == "3"

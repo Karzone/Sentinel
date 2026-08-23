@@ -390,6 +390,23 @@ stop_outcomes = dataset.stop_outcomes
 llm_compliance = dataset.llm_compliance
 
 
+def catalyst_call_counts(
+    calls: Sequence[signal_quality.DirectionalCall],
+) -> tuple[int, int]:
+    """``(scoreable, abstained)``, counted by the function that writes the verdict.
+
+    A "flat" call makes no directional claim, so ``direction_accuracy`` excludes
+    it — otherwise a module could farm accuracy by never committing. The evals
+    page used to headline ``len(calls)`` against the 100-sample gate while the
+    verdict directly beneath it counted only the committed ones, so a live page
+    read "26 — 100 needed for a verdict" above "48% on 21 calls". On the surface
+    whose entire job is honest measurement, that reported MORE progress toward
+    the gate than the gate had actually seen. Both numbers now come from here.
+    """
+    result = signal_quality.direction_accuracy(calls)
+    return result.scoreable, result.calls - result.scoreable
+
+
 def direction_accuracy_frame(calls: Sequence[signal_quality.DirectionalCall]) -> pd.DataFrame:
     """Hit rate with its Wilson interval, plus the coin-flip baseline.
 

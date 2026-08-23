@@ -346,9 +346,16 @@ def evals(st, ctx: Context) -> None:
             unsafe_allow_html=True,
         )
     calls = queries.catalyst_calls(ctx.conn)
+    scoreable, abstained = queries.catalyst_call_counts(calls)
     with row[1]:
-        st.markdown(ui.tile("Scoreable catalyst calls", str(len(calls)),
-                            delta="100 needed for a verdict", mode=ctx.mode),
+        # The count MUST be the scoreable one, not len(calls): the gate below
+        # counts only calls that committed to a direction, and a tile that
+        # counted the abstentions too overstated progress toward it.
+        gate = "100 needed for a verdict"
+        if abstained:
+            gate += f" · {abstained} flat not scored"
+        st.markdown(ui.tile("Scoreable catalyst calls", str(scoreable),
+                            delta=gate, mode=ctx.mode),
                     unsafe_allow_html=True)
     outcomes = queries.conviction_outcomes(ctx.conn)
     with row[2]:
@@ -399,7 +406,7 @@ def evals(st, ctx: Context) -> None:
     criteria = KillCriteria(
         paper_months=0.0, strategy_sharpe=None, benchmark_sharpe=None,
         strategy_return=None, benchmark_return=None,
-        catalyst_samples=len([c for c in calls if c.scoreable]),
+        catalyst_samples=scoreable,
         catalyst_beats_coin_flip=(
             bool(accuracy["significant"].iloc[0]) if not accuracy.empty else None
         ),
