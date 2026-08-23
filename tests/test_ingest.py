@@ -62,3 +62,56 @@ def test_quality_issues_are_persisted_for_the_health_command(conn, config):
     ingest.ingest(conn, config, ["DEMO1.LSE"], history_days=30)  # short history -> WARN
     stored = repo.get_quality_issues(conn)
     assert any(i.check == "history_depth" for i in stored)
+
+
+class TestVendorFailuresAreVisible:
+    """A failing vendor must not look like a vendor with nothing to say.
+
+    A fundamentals failure is deliberately non-fatal — a ticker with prices can
+    still be scored on trend. But it used to append to `vendor_failures` and
+    raise no quality issue, and nothing printed that list, so 25 failed calls
+    against a live account rendered as "0 fundamentals · 0 critical" with the
+    reason nowhere on screen or in the brief.
+    """
+
+    def _vendor(self, exc):
+        from sentinel.data.base import ProviderError
+
+        class _Failing:
+            name = "stub"
+            def available(self): return True
+            def fetch_fundamentals(self, ticker): raise ProviderError(exc)
+        return _Failing()
+
+    def test_a_failed_fundamentals_call_becomes_a_reported_warning(
+        self, conn, config, monkeypatch
+    ):
+        import datetime as dt
+        from sentinel.data import ingest as ingest_mod, registry
+
+        monkeypatch.setattr(registry, "fundamentals_provider",
+                            lambda _c: self._vendor("402 payment required"))
+        result = ingest_mod.ingest(conn, config, ["X.US"],
+                                   as_of=dt.date(2026, 8, 23), with_news=False)
+
+        assert result.vendor_failures, "the failure was not recorded at all"
+        reported = [i for i in result.report.issues
+                    if "402 payment required" in i.detail]
+        assert reported, (
+            "the vendor failed and the quality report says nothing — the brief "
+            "would show 0 fundamentals with no reason"
+        )
+
+    def test_it_stays_non_fatal(self, conn, config, monkeypatch):
+        """Prices still ingest; the run is degraded, not blocked."""
+        import datetime as dt
+        from sentinel.data import ingest as ingest_mod, registry
+        from sentinel.domain.enums import Severity
+
+        monkeypatch.setattr(registry, "fundamentals_provider",
+                            lambda _c: self._vendor("quota exhausted"))
+        result = ingest_mod.ingest(conn, config, ["X.US"],
+                                   as_of=dt.date(2026, 8, 23), with_news=False)
+        vendor_issues = [i for i in result.report.issues if i.check == "vendor"]
+        assert vendor_issues
+        assert all(i.severity is Severity.WARN for i in vendor_issues)

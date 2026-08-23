@@ -116,8 +116,18 @@ def ingest(
                     )
             except ProviderError as exc:
                 # Not fatal: a ticker with prices but no fundamentals can still
-                # be scored on trend, it just cannot be a long-term idea.
+                # be scored on trend, it just cannot be a long-term idea. But it
+                # must still be VISIBLE — this used to append to vendor_failures
+                # and nothing else, and nothing printed that list, so a failing
+                # vendor was indistinguishable from one with nothing to say.
                 result.vendor_failures.append(f"{ticker} fundamentals: {exc}")
+                result.report.extend([
+                    DataQualityIssue(
+                        check="vendor", severity=Severity.WARN, ticker=ticker,
+                        detail=f"fundamentals vendor {fundamentals.name} failed: {exc}",
+                        as_of=as_of,
+                    )
+                ])
 
         # -- news
         if with_news and news.available():
