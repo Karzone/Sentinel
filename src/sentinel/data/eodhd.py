@@ -21,7 +21,7 @@ from ..config import api_key
 from ..domain.enums import Wrapper
 from ..domain.models import Bar, Fundamentals
 from ..money import dec
-from .base import ProviderError, currency_for
+from .base import ProviderError, currency_for, redact
 
 BASE_URL = "https://eodhd.com/api"
 ADAPTER_VERSION = "eodhd-v1"
@@ -153,7 +153,13 @@ class EodhdProvider:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as exc:
-            raise ProviderError(f"EODHD request failed: {exc}") from exc
+            # NEVER let httpx's message through unredacted. EODHD authenticates
+            # by query parameter, and httpx puts the full URL in the exception —
+            # so the raw API token was reaching the terminal, the log files, the
+            # brief's data-warnings section, and anything a user pastes when
+            # asking for help. A credential that appears in an error message is
+            # a credential you have to rotate.
+            raise ProviderError(f"EODHD request failed: {redact(exc, self._token)}") from exc
         finally:
             if self._client is None:
                 client.close()

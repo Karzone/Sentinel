@@ -18,7 +18,7 @@ import httpx
 from ..config import api_key
 from ..domain.models import Fundamentals
 from ..money import dec
-from .base import ProviderError, currency_for
+from .base import ProviderError, currency_for, redact
 
 BASE_URL = "https://financialmodelingprep.com/api/v3"
 ADAPTER_VERSION = "fmp-v1"
@@ -123,7 +123,7 @@ class FmpProvider:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as exc:
-            raise ProviderError(f"FMP request failed: {exc}") from exc
+            raise ProviderError(f"FMP request failed: {redact(exc, self._token)}") from exc
         finally:
             if self._client is None:
                 client.close()

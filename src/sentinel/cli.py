@@ -123,12 +123,13 @@ def ingest(
     names = _tickers(config, universe, tickers)
     result = ingest_mod.ingest(conn, config, names, history_days=history)
     console.print(result.summary())
-    # A vendor failure was collected and never shown. A fundamentals failure
-    # raises no quality issue either (it is deliberately non-fatal), so 25 failed
-    # calls printed as "0 fundamentals · 0 critical" with no reason anywhere —
-    # indistinguishable from a vendor that simply had nothing to return.
+    # Vendor failures reach the screen as quality issues (prices CRITICAL,
+    # fundamentals WARN) — printing result.vendor_failures as well reported the
+    # same failure twice and doubled the wall of text on a bad day. News is the
+    # one path that raises no issue, so it is named here.
     for failure in result.vendor_failures:
-        console.print(f"[red]vendor[/] {failure}")
+        if " news: " in failure:
+            console.print(f"[yellow]vendor[/] {failure}")
     for issue in result.report.critical:
         console.print(f"[red]CRITICAL[/] {issue.ticker}: {issue.detail}")
     for issue in result.report.warnings[:10]:

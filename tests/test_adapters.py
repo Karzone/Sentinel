@@ -225,3 +225,53 @@ class TestFutureDatedFundamentalsAreReported:
 
         critical = [i for i in result.report.issues if "after the as-of date" in i.detail]
         assert critical, "a snapshot dated in the future was stored with no complaint"
+
+
+class TestTokensNeverReachAnErrorMessage:
+    """Every vendor here authenticates by QUERY PARAMETER, and httpx puts the
+    full URL — parameters included — in its exception. Interpolating that into
+    an error string leaked live tokens into terminal output, log files, the
+    brief's data-warnings section, and anything pasted when asking for help.
+
+    Found the hard way: a 403 from EODHD printed the working API token 25 times.
+    """
+
+    TOKEN = "6a8b470612a6e0.52044314"          # shape of a real EODHD token
+
+    def _raising_client(self, url):
+        import httpx
+
+        class _Client:
+            def get(self, *_a, **_k):
+                request = httpx.Request("GET", url)
+                response = httpx.Response(403, request=request)
+                raise httpx.HTTPStatusError(
+                    f"Client error '403 Forbidden' for url '{url}'",
+                    request=request, response=response,
+                )
+            def close(self): pass
+        return _Client()
+
+    @pytest.mark.parametrize("provider_name, param, call", [
+        ("eodhd", "api_token", lambda p: p._get("thing", {})),
+        ("fmp", "apikey", lambda p: p._get("thing", {})),
+        # Finnhub builds its request inline in fetch_news — no _get to poke.
+        ("finnhub", "token", lambda p: p.fetch_news("NVDA.US", dt.datetime(2026, 8, 1, tzinfo=dt.UTC))),
+    ])
+    def test_the_token_is_redacted(self, provider_name, param, call):
+        import importlib
+        from sentinel.data.base import ProviderError
+
+        module = importlib.import_module(f"sentinel.data.{provider_name}")
+        cls = {
+            "eodhd": "EodhdProvider", "fmp": "FmpProvider", "finnhub": "FinnhubProvider",
+        }[provider_name]
+        url = f"https://vendor.example/api/thing?{param}={self.TOKEN}&fmt=json"
+        provider = getattr(module, cls)(self.TOKEN, client=self._raising_client(url))
+
+        with pytest.raises(ProviderError) as caught:
+            call(provider)
+        message = str(caught.value)
+        assert self.TOKEN not in message, f"{provider_name} leaked its token: {message}"
+        assert "***" in message
+        assert "403" in message, "redaction must not cost the diagnostic"

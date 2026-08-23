@@ -83,3 +83,20 @@ def currency_for(ticker: str) -> str:
     if upper.endswith(".TO"):
         return "CAD"
     return "GBP" if "." not in upper else "USD"
+
+def redact(value: object, secret: str | None) -> str:
+    """`value` as text, with `secret` replaced by a marker.
+
+    Every vendor here authenticates by QUERY PARAMETER, and httpx puts the full
+    URL — parameters included — into its exception message. Interpolating that
+    exception into an error string put live API tokens into terminal output, log
+    files, the brief's data-warnings section, and anything a user pastes when
+    asking for help. A credential that reaches an error message has to be
+    rotated, so the redaction belongs at the point the message is built.
+
+    Matches on the secret rather than on a URL pattern: it can arrive through a
+    URL, a redirect, or a response body, and only one of those is a URL.
+    """
+    text = str(value)
+    return text.replace(secret, "***") if secret else text
+
