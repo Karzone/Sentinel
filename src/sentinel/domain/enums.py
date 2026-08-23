@@ -68,6 +68,7 @@ class RiskCheckId(StrEnum):
     SWING_SUB_ALLOCATION = "swing_sub_allocation"
     DRAWDOWN_KILL_SWITCH = "drawdown_kill_switch"
     NO_DUPLICATE_POSITION = "no_duplicate_position"
+    MAX_OPEN_POSITIONS = "max_open_positions"
     SUFFICIENT_CASH = "sufficient_cash"
     DATA_FRESHNESS = "data_freshness"
 
