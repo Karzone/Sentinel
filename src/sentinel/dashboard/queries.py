@@ -29,7 +29,7 @@ import pandas as pd
 from ..config import Config
 from ..domain.enums import IdeaClass, Severity
 from ..domain.models import Idea
-from ..evals import calibration, signal_quality
+from ..evals import calibration, dataset, signal_quality
 from ..money import dec
 from ..risk import RiskEngine, sector_allocation as risk_sector_allocation
 from ..storage import audit, repo
@@ -381,47 +381,13 @@ def evidence_frame(item: Idea) -> pd.DataFrame:
 # ---------------------------------------------------------------- evals
 
 
-def _realised_return(
-    conn: sqlite3.Connection, ticker: str, start: dt.date, horizon_days: int
-) -> float | None:
-    bars = repo.get_bars(conn, ticker, start=start)
-    if len(bars) < 2:
-        return None
-    entry = bars[0].adjusted_close
-    target_date = start + dt.timedelta(days=horizon_days)
-    exit_bar = None
-    for bar in bars:
-        exit_bar = bar
-        if bar.date >= target_date:
-            break
-    if exit_bar is None or entry <= 0 or exit_bar.date <= start:
-        return None
-    return float(exit_bar.adjusted_close / entry - 1)
-
-
-def catalyst_calls(conn: sqlite3.Connection, *, days: int = 730) -> list[signal_quality.DirectionalCall]:
-    """Every stored catalyst read, scored against what the price actually did.
-
-    Only calls whose horizon has fully elapsed are included — scoring a 90-day
-    call after 20 days would quietly bias the hit rate toward whatever the last
-    three weeks did.
-    """
-    since = dt.date.today() - dt.timedelta(days=days)
-    calls: list[signal_quality.DirectionalCall] = []
-    for item in repo.get_ideas(conn, since=since, limit=5000):
-        catalyst = item.catalyst
-        if catalyst is None:
-            continue
-        if item.as_of + dt.timedelta(days=catalyst.horizon_days) > dt.date.today():
-            continue
-        realised = _realised_return(conn, item.ticker, item.as_of, catalyst.horizon_days)
-        if realised is None:
-            continue
-        calls.append(signal_quality.DirectionalCall(
-            ticker=item.ticker, predicted=catalyst.direction.value, realised_return=realised,
-            materiality=catalyst.materiality, horizon_days=catalyst.horizon_days,
-        ))
-    return calls
+# Eval inputs are assembled in evals/dataset.py and re-exported here, so the
+# dashboard and the weekly review cannot drift into two different definitions
+# of "which catalyst calls are scoreable".
+catalyst_calls = dataset.catalyst_calls
+conviction_outcomes = dataset.conviction_outcomes
+stop_outcomes = dataset.stop_outcomes
+llm_compliance = dataset.llm_compliance
 
 
 def direction_accuracy_frame(calls: Sequence[signal_quality.DirectionalCall]) -> pd.DataFrame:
@@ -482,12 +448,6 @@ def conviction_frame(outcomes: Sequence[tuple[str, float]]) -> pd.DataFrame:
     frame.attrs["verdict"] = result.verdict()
     frame.attrs["ordered"] = result.ordered
     return frame
-
-
-def llm_compliance(conn: sqlite3.Connection) -> dict[str, Any]:
-    stats = repo.llm_schema_compliance(conn)
-    stats["verdict"] = signal_quality.schema_compliance_verdict(stats)
-    return stats
 
 
 # ---------------------------------------------------------------- data health

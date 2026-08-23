@@ -164,9 +164,6 @@ Recorded so the gaps are known rather than discovered.
   integration the spec mentions for US names is not wired.
 - **Reddit / StockTwits sentiment.** The sentiment module accepts arbitrary text via `extra_texts`,
   but only news headlines are currently fed to it.
-- **The weekly review is not scheduled and has no CLI entry point.** `brief/render.py::weekly_review`
-  exists and is tested, but nothing calls it — wiring `sentinel weekly` and a second timer is the
-  obvious next step. The *daily* brief is scheduled (see below).
 
 ## 7a. Scheduling
 
@@ -189,8 +186,19 @@ The script exists because the failure modes of a scheduled job are all *quiet* o
 `Timezone=Europe/London` on the timer is why systemd is preferred over crontab: 07:00 stays 07:00
 through both clock changes with nothing to edit, and `Persistent=true` catches up after downtime.
 
-The runner's exit-code routing, locking and PATH repair are covered by `tests/test_deploy.py`
-against a fake `uv`, and the script has been run end-to-end against a real database.
+The **weekly review** (`sentinel weekly`) runs Sunday 18:00 on the same lock, and reports
+performance, the benchmark comparison, every eval that can return a verdict, the §5.5 kill criteria,
+and a mandatory faults section. Its exit code 2 means *a kill criterion has been met*, which pushes
+an alert rather than waiting to be read.
+
+**A gap this closed, found by running it rather than by any test:** `KillCriteria.verdicts()` printed
+*nothing at all* once the paper period had elapsed but the four comparison inputs were unavailable —
+silence that reads exactly like "the gate passed" while meaning it was never evaluated. It now says
+so explicitly and names the missing inputs, and the weekly review computes the strategy and benchmark
+Sharpe itself so the gate can usually be evaluated for real.
+
+The runners' exit-code routing, locking and PATH repair are covered by `tests/test_deploy.py`
+against a fake `uv`, and both scripts have been run end-to-end against a real database.
 
 ## 8. Verification
 

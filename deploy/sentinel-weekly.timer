@@ -1,0 +1,15 @@
+[Unit]
+Description=Run the Sentinel weekly review on Sunday evenings
+Documentation=https://github.com/Karzone/Sentinel
+
+[Timer]
+# Sunday 18:00 UK. Late enough that the week is unambiguously over, early enough
+# that a met kill criterion is read before Monday's open rather than after it.
+OnCalendar=Sun 18:00
+Timezone=Europe/London
+
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

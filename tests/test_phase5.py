@@ -262,12 +262,8 @@ class TestRendering:
 
         assert _inline("<script>alert(1)</script>") == "&lt;script&gt;alert(1)&lt;/script&gt;"
 
-    def test_the_weekly_review_never_ships_an_empty_wrong_section(self):
-        from sentinel.brief import weekly_review
-
-        text = weekly_review(self._brief(), performance="flat", benchmark_lines=["B1 +2%"],
-                             eval_lines=["nothing yet"], wrong=[])
-        assert "must never be empty" in text
+    # The weekly review moved to its own module and signature; its rendering,
+    # including the mandatory faults section, is covered by tests/test_weekly.py.
 
 
 class RecordingNotifier:

@@ -286,6 +286,56 @@ def brief(
     raise typer.Exit(EXIT_DATA_BLOCKED if document.stale else EXIT_OK)
 
 
+@app.command()
+def weekly(
+    weeks: int = typer.Option(1, "--weeks", help="How many weeks the window covers."),
+    send: bool = typer.Option(False, "--send", help="Email the review."),
+    output: Optional[str] = typer.Option(None, "--output", "-o"),
+    config_path: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Generate the weekly review: performance, benchmarks, evals, and faults."""
+    config = _config(config_path)
+    conn = _db(config)
+    from .brief import weekly as weekly_mod
+    from .brief.render import weekly_review, weekly_subject
+
+    review = weekly_mod.build(conn, config, weeks=weeks)
+    markdown = weekly_review(review)
+    console.print(markdown)
+
+    target = (Path(output) if output
+              else Path(config.paths.briefs) / f"weekly-{review.as_of.isoformat()}.md")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(markdown, encoding="utf-8")
+    console.print(f"[green]written[/] {target}")
+
+    if send:
+        from .brief.render import to_html
+        from .notify import build_router
+
+        router = build_router(config, conn=conn)
+        # The review goes down the DIGEST channel only. It is a scheduled summary,
+        # not an event, and pushing it would erode the one channel that means
+        # "act or review now" — see notify/router.py.
+        result = router.send_digest(
+            subject=weekly_subject(review), body=markdown,
+            html=to_html(review, markdown, title="Sentinel weekly review"),
+        )
+        console.print(
+            f"digest → {result.channel}: "
+            + ("sent" if result.delivered else result.detail)
+        )
+
+    conn.close()
+    # A kill criterion being met is not a failure of this command, but it must be
+    # visible to whatever ran it.
+    raise typer.Exit(
+        EXIT_DATA_BLOCKED
+        if any("KILL CRITERION MET" in line for line in review.kill_criteria)
+        else EXIT_OK
+    )
+
+
 # ---------------------------------------------------------------- paper
 
 

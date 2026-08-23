@@ -1,0 +1,36 @@
+[Unit]
+Description=Sentinel weekly review
+Documentation=https://github.com/Karzone/Sentinel
+# Markets and vendors are on the internet; without this the timer can fire
+# during boot before the machine has a route and the run fails for no reason.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust these three for your machine.
+User=%i
+WorkingDirectory=/home/%i/sentinel
+Environment=SENTINEL_HOME=/home/%i/sentinel
+# Name the universe from your sentinel.toml; omit to use the watchlist.
+# Environment=SENTINEL_UNIVERSE=uk-large
+
+ExecStart=/home/%i/sentinel/deploy/sentinel-weekly.sh
+
+# The script already alerts and logs; systemd restarting it would just re-run a
+# failing pipeline against the same bad vendor data.
+Restart=no
+TimeoutStartSec=1800
+
+# The job needs the network and its own directory, and nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/%i/sentinel
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

@@ -138,31 +138,56 @@ def to_markdown(
     return "\n".join(out)
 
 
-def weekly_review(
-    brief: Brief,
-    *,
-    performance: str,
-    benchmark_lines: Sequence[str],
-    eval_lines: Sequence[str],
-    wrong: Sequence[str],
-) -> str:
-    """The weekly review. ``wrong`` is mandatory and must not be empty."""
+def weekly_review(review, *, subject_prefix: str = "Sentinel") -> str:
+    """Render a WeeklyReview to markdown.
+
+    Takes the review object rather than a Brief: the previous signature accepted
+    a Brief purely to read one date off it, which made the two documents look
+    related when they are assembled from different things.
+
+    The "what the system got wrong" section is mandatory. If it ever arrives
+    empty that is a reporting bug, not a clean week, and the renderer says so
+    rather than omitting the heading.
+    """
     out = [
-        f"# Sentinel — weekly review, week ending {brief.as_of.isoformat()}",
+        f"# {subject_prefix} — weekly review, week ending {review.as_of.isoformat()}",
+        f"*{review.period_start.isoformat()} to {review.as_of.isoformat()} · "
+        f"{review.ideas_generated} idea(s) generated · {review.closed_trades} trade(s) closed*",
         "",
         f"> {DISCLAIMER}",
         "",
-        "## Performance", "", performance, "",
-        "## Versus the benchmarks", "",
+        "## Performance",
+        "",
+        review.performance,
+        "",
+        "## Versus the benchmarks",
+        "",
     ]
-    out += [f"- {line}" for line in benchmark_lines]
+    out += [f"- {line}" for line in review.benchmark_lines]
     out += ["", "## Evals", ""]
-    out += [f"- {line}" for line in eval_lines]
+    out += [f"- {line}" for line in review.eval_lines]
+
+    if review.kill_criteria:
+        out += ["", "## Kill criteria", ""]
+        out += [f"- {line}" for line in review.kill_criteria]
+
     out += ["", "## What the system got wrong this week", ""]
-    out += [f"- {line}" for line in (wrong or ["(nothing recorded — this section must never be empty; "
-                                               "an empty one is a reporting bug)"])]
+    out += [f"- {line}" for line in review.wrong] or [
+        "- (nothing recorded — this section must never be empty; an empty one is a "
+        "reporting bug, not a clean week)"
+    ]
     out += ["", "---", "", DISCLAIMER, ""]
     return "\n".join(out)
+
+
+def weekly_subject(review) -> str:
+    """Derived from what the week held, so it is worth opening."""
+    if any("KILL CRITERION MET" in line for line in review.kill_criteria):
+        return f"Sentinel weekly {review.as_of:%d %b} — a kill criterion has been met"
+    if review.closed_trades:
+        return (f"Sentinel weekly {review.as_of:%d %b} — "
+                f"{review.closed_trades} trade(s) closed")
+    return f"Sentinel weekly {review.as_of:%d %b} — no trades closed"
 
 
 _CSS = """

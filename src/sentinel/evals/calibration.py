@@ -225,6 +225,23 @@ class KillCriteria:
             )
         elif self.short_term_module_demoted is False:
             out.append("Six-month paper gate passed: risk-adjusted return is not below the benchmark.")
+        else:
+            # Past six months, but one of the four inputs is missing. Saying
+            # nothing here is the worst option: it reads identically to "the gate
+            # passed" while actually meaning the gate was never evaluated.
+            missing = [
+                name for name, value in (
+                    ("strategy Sharpe", self.strategy_sharpe),
+                    ("benchmark Sharpe", self.benchmark_sharpe),
+                    ("strategy return", self.strategy_return),
+                    ("benchmark return", self.benchmark_return),
+                ) if value is None
+            ]
+            out.append(
+                f"Paper trading is {self.paper_months:.1f} months in, past the 6-month gate, "
+                f"but the comparison CANNOT be evaluated: {', '.join(missing)} unavailable. "
+                f"The gate is untested, which is not the same as passed."
+            )
 
         if self.catalyst_module_demoted:
             out.append(

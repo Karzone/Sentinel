@@ -278,3 +278,33 @@ class TestJudge:
         later = [judge.should_judge(i, 4) for i in range(10)]
         assert later == [judge.should_judge(i, 4) for i in range(10)]
         assert sum(later) == 2      # 20% sampling
+
+
+class TestKillCriteriaNeverGoesSilent:
+    def _base(self, **kw):
+        defaults = dict(
+            paper_months=8.0, strategy_sharpe=None, benchmark_sharpe=None,
+            strategy_return=None, benchmark_return=None,
+            catalyst_samples=150, catalyst_beats_coin_flip=True, risk_bypass_bugs=0,
+        )
+        defaults.update(kw)
+        return calibration.KillCriteria(**defaults)
+
+    def test_past_the_gate_with_missing_inputs_says_so_rather_than_nothing(self):
+        """Silence here reads identically to 'the gate passed' while actually
+        meaning it was never evaluated. Caught by running a real weekly review."""
+        verdicts = self._base().verdicts()
+        assert any("CANNOT be evaluated" in v for v in verdicts)
+        assert any("not the same as passed" in v for v in verdicts)
+
+    def test_it_names_which_inputs_are_missing(self):
+        verdicts = self._base(strategy_sharpe=0.4, strategy_return=0.05).verdicts()
+        joined = " ".join(verdicts)
+        assert "benchmark Sharpe" in joined and "benchmark return" in joined
+        assert "strategy Sharpe" not in joined
+
+    def test_a_fully_specified_comparison_still_gives_a_real_verdict(self):
+        passed = self._base(strategy_sharpe=0.9, benchmark_sharpe=0.6,
+                            strategy_return=0.14, benchmark_return=0.10).verdicts()
+        assert any("Six-month paper gate passed" in v for v in passed)
+        assert not any("CANNOT be evaluated" in v for v in passed)

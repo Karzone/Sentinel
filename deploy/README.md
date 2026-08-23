@@ -97,9 +97,36 @@ was incomplete.
 The timer runs Monday to Friday. EOD vendors publish nothing at weekends, so a
 Saturday run re-scores Friday's data and mails you a brief you have already read.
 
-## What is not scheduled
+## The weekly review
 
-The **weekly review** (spec §5, Sunday performance-versus-benchmark summary) has
-a renderer in `brief/render.py::weekly_review` but no CLI command yet, so there is
-nothing to schedule. Wiring `sentinel weekly` and a second timer is the obvious
-next step.
+`sentinel-weekly.sh` runs `sentinel weekly --send` on **Sunday at 18:00
+Europe/London** — late enough that the week is unambiguously over, early enough
+that a met kill criterion is read before Monday's open rather than after it.
+
+```bash
+sudo cp sentinel-weekly.service /etc/systemd/system/sentinel-weekly@.service
+sudo cp sentinel-weekly.timer   /etc/systemd/system/sentinel-weekly@.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now "sentinel-weekly@$USER.timer"
+sudo systemctl start "sentinel-weekly@$USER"     # run one now
+```
+
+It reads rather than ingests — no vendor call, just the numbers already stored —
+but it takes **the same lock as the daily runner**, because both write to the
+same SQLite file and a Sunday review racing a catch-up daily run is the kind of
+thing that only happens once.
+
+Its exit codes differ from the daily runner's in one important way:
+
+| Code | Meaning |
+|---|---|
+| 0 | Review generated and sent |
+| 1 | A real failure |
+| 2 | Generated, and **a kill criterion has been met** |
+
+Exit 2 pushes an alert. A met kill criterion is the most consequential thing this
+system can say — the pre-committed answer to "should this money just be indexed?"
+— and it should not sit unread in an inbox until Monday.
+
+`SENTINEL_REVIEW_WEEKS` (default `1`) widens the window if you want a monthly
+retrospective from the same command.
