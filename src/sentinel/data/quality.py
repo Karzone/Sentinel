@@ -20,7 +20,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from ..domain.enums import Severity
 from ..domain.models import Bar, DataQualityIssue, Fundamentals
@@ -241,6 +241,81 @@ def check_history_depth(
     return []
 
 
+#: A series legitimately starts a little after the requested date — the window
+#: opens on a weekend, or the vendor rounds to a month. Beyond this the series
+#: is materially shorter than what was asked for.
+HISTORY_SPAN_TOLERANCE_DAYS = 14
+#: Below this many short series, a shared start date is coincidence rather than
+#: a cap. Three independent listings starting the same week is not.
+HISTORY_CAP_MIN_TICKERS = 3
+#: How tightly the short series must cluster before their common floor is read
+#: as one vendor-imposed boundary.
+HISTORY_CAP_CLUSTER_DAYS = 7
+
+
+def check_history_span(
+    ticker: str, bars: Sequence[Bar], requested_start: dt.date, as_of: dt.date
+) -> list[DataQualityIssue]:
+    """Did we get the window we asked for?
+
+    `check_history_depth` counts bars against a fixed floor, so a series that
+    silently came back a third of the requested length still passes as long as
+    it clears 250 — which is exactly what happened: 800 days were requested,
+    250 bars arrived, and nothing said so. Asking for a window and being handed
+    a shorter one is a distinct fact from "short history", and only the
+    requested start can reveal it.
+
+    INFO rather than WARN on its own, because a young listing is short for an
+    honest reason. `check_history_cap` is what turns many of these into a
+    verdict.
+    """
+    if not bars:
+        return []
+    first = bars[0].date
+    short_by = (first - requested_start).days
+    if short_by <= HISTORY_SPAN_TOLERANCE_DAYS:
+        return []
+    return [_issue(
+        "history_span", Severity.INFO, ticker,
+        f"requested from {requested_start}, earliest bar {first} — {short_by} days "
+        f"short ({len(bars)} bars); a young listing or a vendor history cap",
+        as_of,
+    )]
+
+
+def check_history_cap(
+    first_bars: Mapping[str, dt.date], requested_start: dt.date, as_of: dt.date
+) -> list[DataQualityIssue]:
+    """One run-level verdict on whether the vendor is capping history.
+
+    The distinction this makes is the whole point. A young listing truncates
+    ONE series, at its own IPO date. A plan cap truncates EVERY series to the
+    same floor — independent companies do not start trading in the same week,
+    so a shared boundary across several names is the vendor's, not the market's.
+    Saying that once is worth more than the same INFO on twenty-five tickers,
+    because it names something the user can act on: the plan, not the ticker.
+    """
+    short = {
+        ticker: first for ticker, first in first_bars.items()
+        if (first - requested_start).days > HISTORY_SPAN_TOLERANCE_DAYS
+    }
+    if len(short) < HISTORY_CAP_MIN_TICKERS:
+        return []
+    floor, latest = min(short.values()), max(short.values())
+    if (latest - floor).days > HISTORY_CAP_CLUSTER_DAYS:
+        # Short, but each at its own date — that reads as listing history.
+        return []
+    return [_issue(
+        "history_cap", Severity.WARN, None,
+        f"{len(short)} of {len(first_bars)} series start within "
+        f"{HISTORY_CAP_CLUSTER_DAYS} days of {floor} though {requested_start} was "
+        f"requested — independent listings do not share a start date, so this is a "
+        f"vendor history cap, not listing history. Backtests and walk-forward folds "
+        f"are limited to this window whatever --history asks for.",
+        as_of,
+    )]
+
+
 def check_fundamentals(
     ticker: str, fundamentals: Fundamentals | None, as_of: dt.date
 ) -> list[DataQualityIssue]:
@@ -276,6 +351,7 @@ def run_all(
     *,
     staleness_hours: int = 24,
     min_history_bars: int = 250,
+    requested_start: dt.date | None = None,
 ) -> list[DataQualityIssue]:
     issues: list[DataQualityIssue] = []
     issues += check_freshness(ticker, bars, as_of, staleness_hours=staleness_hours)
@@ -283,5 +359,7 @@ def run_all(
     issues += check_missing_bars(ticker, bars, as_of)
     issues += check_price_sanity(ticker, bars, as_of)
     issues += check_history_depth(ticker, bars, as_of, minimum=min_history_bars)
+    if requested_start is not None:
+        issues += check_history_span(ticker, bars, requested_start, as_of)
     issues += check_fundamentals(ticker, fundamentals, as_of)
     return issues

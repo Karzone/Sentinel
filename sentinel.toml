@@ -1,0 +1,120 @@
+# Sentinel configuration.
+#
+# Research output, not financial advice.
+#
+# Satellite capital ONLY — the 10-20% of investable capital this system manages.
+# The passive core in your ISA is deliberately outside its scope, and every
+# position-sizing calculation below is a fraction of THIS number, not of your
+# net worth.
+satellite_capital_gbp = 10000
+
+[risk]
+# These are hard limits. Nothing — no signal, no conviction level, no LLM —
+# can override them. Editing this block is the only way they change, which is
+# why it lives in a tracked file.
+max_single_position_pct = 10    # of satellite capital
+max_sector_pct          = 30    # of satellite capital
+risk_per_trade_pct      = 1     # loss taken if a stop fills exactly
+swing_max_pct           = 25    # short-term ideas capped well below long-term
+drawdown_kill_pct       = 15    # from high-water mark -> no new swing ideas
+min_position_gbp        = 250   # below this, costs eat the edge
+max_open_positions      = 12
+
+[data]
+# "fixture" runs the whole pipeline offline from generated series — no keys, no
+# network. Swap to a real vendor once its key is in .env.
+price_provider        = "fixture"   # fixture | eodhd
+fundamentals_provider = "fixture"   # fixture | fmp | eodhd, or a fallback
+                                    # chain: "fmp,eodhd" tries EODHD for the
+                                    # tickers FMP's plan refuses (402/403).
+news_provider         = "fixture"   # fixture | finnhub
+staleness_hours       = 24
+min_history_bars      = 250
+
+[llm]
+model         = "claude-sonnet-5"
+judge_model   = "claude-opus-5"
+temperature   = 0.0
+enabled       = true
+
+[notify]
+# Push is for "act or review now" only. The daily brief goes by email.
+email_to    = ""
+ntfy_topic  = ""
+
+[paths]
+db     = "data/sentinel.sqlite"
+briefs = "data/briefs"
+
+[universes]
+demo = ["DEMO1.LSE", "DEMO2.LSE", "DEMO3.US", "DEMO4.US"]
+
+# "AI stocks" is not an index and has no definition, so this is a JUDGEMENT
+# LIST, not a fact. The criterion used: US-listed companies whose revenue or
+# capital spending is materially driven by AI compute, models or tooling —
+# grouped below by how they are exposed, because those groups behave
+# differently in a drawdown.
+#
+# Verify it against the vendor before trusting it. A ticker that has been
+# renamed, delisted or is not on your plan will simply return no bars, and the
+# quality layer will report it rather than silently dropping it.
+ai = [
+  # Compute — the picks-and-shovels layer
+  "NVDA.US", "AMD.US", "AVGO.US", "TSM.US", "MU.US",
+  "INTC.US", "ARM.US", "ASML.US", "MRVL.US", "SMCI.US",
+  # Platforms — the buyers of that compute
+  "MSFT.US", "GOOGL.US", "AMZN.US", "META.US", "ORCL.US", "IBM.US",
+  # Infrastructure — power, cooling, networking, servers
+  "VRT.US", "ANET.US", "DELL.US", "HPE.US",
+  # Applications — companies selling AI rather than building it
+  "PLTR.US", "NOW.US", "SNOW.US", "CRM.US", "MDB.US",
+]
+
+[sectors]
+# Ticker -> sector, for the 30% concentration limit. An unmapped ticker falls
+# into a shared "unknown" bucket, which concentrates rather than escapes.
+"DEMO1.LSE" = "consumer"
+"DEMO2.LSE" = "industrials"
+"DEMO3.US"  = "technology"
+"DEMO4.US"  = "healthcare"
+
+# The AI list, mapped on real economic exposure rather than on the theme.
+#
+# READ THIS BEFORE RELYING ON THE 30% SECTOR CAP HERE. These names are spread
+# across five sectors, so the cap permits far more AI exposure than it looks —
+# but AI exposure is what makes them move together, and that cuts ACROSS
+# sectors. Holding NVDA, MSFT and VRT is one bet wearing three sector labels.
+# The concentration limit is doing less work on this universe than on a
+# diversified one, and no config change fixes that: it is a property of the
+# universe you chose.
+"NVDA.US"  = "semiconductors"
+"AMD.US"   = "semiconductors"
+"AVGO.US"  = "semiconductors"
+"TSM.US"   = "semiconductors"
+"MU.US"    = "semiconductors"
+"INTC.US"  = "semiconductors"
+"ARM.US"   = "semiconductors"
+"ASML.US"  = "semiconductors"
+"MRVL.US"  = "semiconductors"
+"SMCI.US"  = "hardware"
+"DELL.US"  = "hardware"
+"HPE.US"   = "hardware"
+"ANET.US"  = "hardware"
+"VRT.US"   = "industrials"
+"MSFT.US"  = "software"
+"ORCL.US"  = "software"
+"IBM.US"   = "software"
+"NOW.US"   = "software"
+"SNOW.US"  = "software"
+"CRM.US"   = "software"
+"MDB.US"   = "software"
+"PLTR.US"  = "software"
+"GOOGL.US" = "communication"
+"META.US"  = "communication"
+"AMZN.US"  = "consumer"
+
+[benchmarks]
+B1 = "VWRP.LSE"   # Vanguard FTSE All-World — the "just index it" question
+B2 = "SPY.US"     # S&P 500, GBP-adjusted
+B3 = "CASH"       # money-market floor
+B4 = "RANDOM"     # Monte Carlo random portfolios — skill vs luck

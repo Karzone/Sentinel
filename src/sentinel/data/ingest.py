@@ -63,6 +63,7 @@ def ingest(
     start = as_of - dt.timedelta(days=history_days)
     result = IngestResult(as_of=as_of, tickers=tuple(tickers))
     result.report = quality.QualityReport(as_of)
+    first_bars: dict[str, dt.date] = {}
 
     prices = registry.price_provider(config)
     fundamentals = registry.fundamentals_provider(config)
@@ -148,13 +149,21 @@ def ingest(
     for ticker in tickers:
         stored_bars = repo.get_bars(conn, ticker, end=as_of)
         stored_fundamentals = repo.get_fundamentals(conn, ticker, as_of=as_of)
+        if stored_bars:
+            first_bars[ticker] = stored_bars[0].date
         result.report.extend(
             quality.run_all(
                 ticker, stored_bars, stored_fundamentals, as_of,
                 staleness_hours=config.data.staleness_hours,
                 min_history_bars=config.data.min_history_bars,
+                requested_start=start,
             )
         )
+
+    # Run-level, after every ticker: a shared start date is only visible across
+    # the universe. One ticker short is a listing; twenty-five short to the same
+    # week is a plan.
+    result.report.extend(quality.check_history_cap(first_bars, start, as_of))
 
     repo.save_quality_issues(conn, result.report.issues)
     audit.record(
@@ -164,6 +173,12 @@ def ingest(
             "fundamentals": result.fundamentals_written, "news": result.news_written,
             "critical": len(result.report.critical), "warnings": len(result.report.warnings),
             "vendor_failures": result.vendor_failures,
+            # The requested window and what each series actually starts at.
+            # Without these, comparing two runs of different depth is guesswork
+            # — which is exactly how a silent truncation stayed unexplained.
+            "history_days": history_days,
+            "requested_start": start.isoformat(),
+            "first_bars": {t: d.isoformat() for t, d in sorted(first_bars.items())},
         },
     )
     log.info("ingest complete: %s", result.summary())

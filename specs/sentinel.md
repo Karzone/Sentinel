@@ -199,6 +199,15 @@ Recorded so the gaps are known rather than discovered.
   chain. Only when every vendor refuses the same ticker is it a failure, and then the error
   carries each vendor's own reason. **Full coverage of a universe is still a paid decision** —
   the chain widens two partial free tiers, it does not make either complete.
+- **Vendor history caps are detected, not assumed.** One run wrote 568 bars per ticker and the next
+  wrote exactly 250, with nothing in the report saying why: `check_history_depth` compares against a
+  fixed floor of 250, so a series a third of the requested length cleared it exactly. `run_all` now
+  takes the `requested_start` and `check_history_span` reports any series materially shorter than the
+  window asked for (INFO — a young listing is legitimately short). `check_history_cap` turns many of
+  those into one run-level WARN **only** when the short series share a start date: independent
+  listings do not, so a common floor is the vendor's boundary rather than the market's. The requested
+  window and every series' first bar are recorded in the `INGEST_COMPLETED` audit payload, so two
+  runs of different depth can be compared after the fact instead of guessed at.
 - **No live LLM call has been made.** The client is exercised end to end against a stub SDK
   (including the repair turn and the no-`temperature` behaviour), but there is no
   `ANTHROPIC_API_KEY` in this environment.

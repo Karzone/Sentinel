@@ -105,6 +105,51 @@ def init(
     console.print(f"\n[dim]{DISCLAIMER}[/]")
 
 
+
+def group_warnings(warnings, *, max_named: int = 6) -> list[str]:
+    """One line per DISTINCT warning, naming every ticker it hit.
+
+    This used to be `warnings[:10]`, which is the same silent truncation the
+    quality checks exist to catch. A run with sixteen identical "not in your
+    plan" 402s spent all ten lines on near-identical paragraphs and dropped the
+    other twenty-five warnings entirely — including any run-level verdict,
+    which sorts last because it has no ticker. Grouping is strictly better on
+    both counts: the repeated failure costs one line and says how many tickers
+    it hit, and nothing distinct is ever hidden.
+
+    Grouping is by the detail with the ticker's own name removed, so two
+    tickers failing the same way collapse and two failing differently do not.
+    """
+    groups: dict[tuple[str, str], list[str]] = {}
+    for issue in warnings:
+        detail = issue.detail
+        ticker = issue.ticker or ""
+        for name in filter(None, (ticker, ticker.split(".")[0])):
+            detail = detail.replace(name, "…")
+        key = (issue.check, detail)
+        groups.setdefault(key, [])
+        if issue.ticker:
+            groups[key].append(issue.ticker)
+
+    lines: list[str] = []
+    for (_check, _normalised), tickers in groups.items():
+        # Print the first occurrence verbatim: the normalised form is only a
+        # grouping key, and showing "…" where a ticker was would be worse
+        # reading than showing one real example.
+        example = next(
+            i for i in warnings
+            if i.check == _check and (i.ticker in tickers or (not tickers and not i.ticker))
+        )
+        if not tickers:
+            lines.append(example.detail)
+        elif len(tickers) == 1:
+            lines.append(f"{tickers[0]}: {example.detail}")
+        else:
+            named = ", ".join(tickers[:max_named])
+            more = f" +{len(tickers) - max_named} more" if len(tickers) > max_named else ""
+            lines.append(f"{len(tickers)} tickers ({named}{more}): {example.detail}")
+    return lines
+
 # ---------------------------------------------------------------- ingest / health
 
 
@@ -132,8 +177,8 @@ def ingest(
             console.print(f"[yellow]vendor[/] {failure}")
     for issue in result.report.critical:
         console.print(f"[red]CRITICAL[/] {issue.ticker}: {issue.detail}")
-    for issue in result.report.warnings[:10]:
-        console.print(f"[yellow]warn[/] {issue.ticker}: {issue.detail}")
+    for line in group_warnings(result.report.warnings):
+        console.print(f"[yellow]warn[/] {line}")
     conn.close()
     raise typer.Exit(EXIT_DATA_BLOCKED if result.report.blocking else EXIT_OK)
 
