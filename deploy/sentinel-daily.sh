@@ -97,6 +97,20 @@ case "$brief_rc" in
      exit "$brief_rc" ;;
 esac
 
+# The one-page readout, refreshed from the database the run just updated. Written
+# to a STABLE path as well as the dated one, so a bookmark or a static host keeps
+# working without anyone editing a link each morning.
+#
+# Deliberately after the brief and deliberately non-fatal: this is a convenience
+# view, and failing the whole run — which would fire a push alert — because an
+# HTML file could not be written would be a false alarm about a healthy pipeline.
+readout_target="${SENTINEL_READOUT:-$SENTINEL_HOME/data/briefs/readout.html}"
+if "$UV" run --project "$PROJECT_ROOT" sentinel readout -o "$readout_target" >>"$LOG" 2>&1; then
+  log "readout written to $readout_target"
+else
+  log "WARNING: the readout could not be written (the brief above is unaffected)"
+fi
+
 # Keep 30 days of logs. Small, but unbounded log growth is how a Pi fills its SD card.
 find "$LOG_DIR" -name 'daily-*.log' -type f -mtime +30 -delete 2>/dev/null || true
 

@@ -276,3 +276,43 @@ this part cannot be scripted from here.
 - The app sleeps after inactivity; the next visitor waits for a cold start and
   a fresh seed. That is fine for a demonstration and useless for a portfolio,
   which is the distinction this whole section exists to keep.
+
+---
+
+# The one-page readout
+
+`sentinel readout` writes every dashboard surface into a single self-contained
+HTML file. No server, no password, no browser session — it opens from disk.
+
+```bash
+uv run sentinel readout                    # data/briefs/readout-<date>.html
+uv run sentinel readout -o ~/sentinel.html # anywhere you like
+```
+
+**The daily run already refreshes one.** After the brief, `sentinel-daily.sh`
+writes `data/briefs/readout.html` — a stable path, so a bookmark or a static host
+keeps working without editing a link each morning. Override with
+`SENTINEL_READOUT`. That step is deliberately non-fatal: a convenience view that
+could not be written is not a broken pipeline, and firing the push alert for it
+would cost the channel its meaning.
+
+## Why this is not "live"
+
+The file is a snapshot with the data baked in. Nothing polls, because there is
+nothing to poll: the database is a local SQLite file with no endpoint in front
+of it. **Serving it live is what the tunnel above does** — and a hosted static
+copy is stale from the moment the next run finishes.
+
+What that buys you is a page with no moving parts. It survives being emailed,
+opened offline, or read in three years when the app no longer runs.
+
+## Choosing between the three
+
+| | Live? | Real data? | Needs |
+|---|---|---|---|
+| `sentinel readout` | no — as fresh as the last run | yes | nothing |
+| Cloudflare tunnel | yes | yes | cloudflared + a password |
+| Community Cloud | yes | **never** — fabricated only | a GitHub authorisation |
+
+The readout and the tunnel read the same query layer as the dashboard, so none
+of the three can report a different number for the same fact.

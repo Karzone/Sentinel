@@ -34,6 +34,7 @@ def rig(tmp_path):
         f'  *"sentinel ingest"*)  exit "${{FAKE_INGEST_RC:-0}}" ;;\n'
         f'  *"sentinel brief"*)   exit "${{FAKE_BRIEF_RC:-0}}" ;;\n'
         f'  *"notify failure"*)   exit "${{FAKE_ALERT_RC:-0}}" ;;\n'
+        f'  *"sentinel readout"*) exit "${{FAKE_READOUT_RC:-0}}" ;;\n'
         "esac\n"
         "exit 0\n"
     )
@@ -163,3 +164,26 @@ class TestLogging:
         logs = list((tmp_path / "logs").glob("daily-*.log"))
         assert len(logs) == 1
         assert "=== ingest ===" in logs[0].read_text()
+
+
+class TestReadout:
+    """The readout is a convenience view. It must be refreshed by the run, and
+    it must never be able to fail the run."""
+
+    def test_a_readout_is_written_after_the_brief(self, rig):
+        proc = rig()
+        assert "sentinel readout" in proc.calls
+        assert proc.calls.index("sentinel brief") < proc.calls.index("sentinel readout")
+
+    def test_a_failed_readout_does_not_fail_the_run_or_raise_an_alert(self, rig):
+        """A push alert means "the pipeline is broken". An HTML file that could
+        not be written is not that, and crying wolf costs the channel."""
+        proc = rig(FAKE_READOUT_RC=1)
+        assert proc.returncode == 0
+        assert "notify failure" not in proc.calls
+        assert "WARNING: the readout could not be written" in proc.stdout
+
+    def test_it_writes_to_a_stable_path_so_a_bookmark_keeps_working(self, rig, tmp_path):
+        target = tmp_path / "somewhere" / "readout.html"
+        proc = rig(SENTINEL_READOUT=str(target))
+        assert f"-o {target}" in proc.calls

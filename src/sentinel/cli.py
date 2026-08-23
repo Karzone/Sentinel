@@ -336,6 +336,31 @@ def weekly(
     )
 
 
+@app.command()
+def readout(
+    output: Optional[str] = typer.Option(None, "--output", "-o",
+                                         help="Where to write the HTML. Defaults to the briefs directory."),
+    config_path: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Write the one-page HTML readout: every dashboard surface in one file.
+
+    Self-contained — no server, no password, no browser session. Open it from
+    disk, or point a static host at it. It reads through the same query layer the
+    dashboard uses, so the two cannot report different numbers.
+    """
+    config = _config(config_path)
+    conn = _db(config)
+    from .brief import readout as readout_mod
+
+    html = readout_mod.build(conn, config, as_of=dt.date.today())
+    target = (Path(output) if output
+              else Path(config.paths.briefs) / f"readout-{dt.date.today().isoformat()}.html")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(html, encoding="utf-8")
+    conn.close()
+    console.print(f"[green]written[/] {target} ({len(html):,} bytes)")
+
+
 # ---------------------------------------------------------------- paper
 
 

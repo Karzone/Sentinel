@@ -1,0 +1,674 @@
+<title>Sentinel Readout</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+
+<style>
+:root{
+  --display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --body:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+
+  --canvas:#f4f7fb; --card:#ffffff; --sunk:#eef3f9;
+  --ink:#0f1720; --muted:#5a6b7d; --faint:#71808f;
+  --rule:#dce4ee; --rule-strong:#c3cfdd;
+
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --ramp1:#c3daf6; --ramp2:#8fbcef; --ramp3:#5598e7; --ramp4:#2a78d6; --ramp5:#17548f;
+
+  --critical:#b3291a; --warn:#a06a00; --good:#0e7d55;
+  --critical-wash:#fbeae7; --warn-wash:#fdf3e0; --good-wash:#e6f5ee;
+  --shadow:0 1px 2px rgba(15,23,32,.06),0 0 0 1px rgba(15,23,32,.03);
+}
+/* Standard form, not CSS nesting: the guard makes an explicit light choice beat
+   a dark OS, while the default un-stamped state still follows the system. */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --canvas:#0d1218; --card:#141b23; --sunk:#101720;
+    --ink:#e6edf5; --muted:#96a5b6; --faint:#7d8c9d;
+    --rule:#232d38; --rule-strong:#33404e;
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+    --ramp1:#17335a; --ramp2:#1d4d85; --ramp3:#2f72c0; --ramp4:#5a9ce8; --ramp5:#a8cbf5;
+    --critical:#f07a68; --warn:#e0a54a; --good:#4cc999;
+    --critical-wash:#2a1512; --warn-wash:#241a08; --good-wash:#0d2419;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.04);
+  }
+}
+:root[data-theme="dark"]{
+  --canvas:#0d1218; --card:#141b23; --sunk:#101720;
+  --ink:#e6edf5; --muted:#96a5b6; --faint:#7d8c9d;
+  --rule:#232d38; --rule-strong:#33404e;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --ramp1:#17335a; --ramp2:#1d4d85; --ramp3:#2f72c0; --ramp4:#5a9ce8; --ramp5:#a8cbf5;
+  --critical:#f07a68; --warn:#e0a54a; --good:#4cc999;
+  --critical-wash:#2a1512; --warn-wash:#241a08; --good-wash:#0d2419;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.04);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--canvas); color:var(--ink);
+  font-family:var(--body); font-size:16.5px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px; margin:0 auto; padding:0 20px 88px}
+h1,h2,h3,.eyebrow,.tile-label,.chip,th{font-family:var(--display)}
+h2{font-size:1.34rem; font-weight:600; letter-spacing:-.012em; margin:0 0 4px; text-wrap:balance}
+h3{font-size:1.02rem; font-weight:600; margin:0 0 4px}
+p{margin:0 0 12px; max-width:68ch}
+a{color:var(--s1)}
+.num{font-family:var(--mono); font-variant-numeric:tabular-nums}
+
+/* ---- masthead ---- */
+header{padding:52px 0 26px; border-bottom:2px solid var(--ink)}
+.mark{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap}
+.mark h1{
+  font-size:clamp(2.1rem,5.4vw,3rem); font-weight:700; letter-spacing:-.03em;
+  margin:0; line-height:1;
+}
+.mark .sub{font-family:var(--display); font-size:.82rem; font-weight:500; color:var(--faint)}
+.standfirst{margin-top:14px; font-size:1.08rem; color:var(--muted); max-width:62ch}
+
+/* ---- the fabricated-data warning: unmissable, not decorative ---- */
+.fabricated{
+  margin:22px 0 0; padding:14px 16px; border-radius:4px;
+  background:var(--warn-wash); border:1px solid var(--warn);
+  border-left-width:5px; font-size:.95rem; color:var(--ink);
+}
+.fabricated strong{font-family:var(--display); font-weight:700}
+
+/* ---- verdict ---- */
+.verdict{margin:34px 0 0; padding:26px 0 30px; border-bottom:1px solid var(--rule)}
+.verdict .lede{
+  font-family:var(--display); font-weight:600; letter-spacing:-.02em;
+  font-size:clamp(1.5rem,3.6vw,2.1rem); line-height:1.22; margin:0 0 18px; max-width:22ch;
+}
+.verdict .lede em{font-style:normal; color:var(--s2)}
+.bench-row{display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(196px,1fr))}
+.bench{padding:13px 15px; background:var(--card); border:1px solid var(--rule); border-radius:4px; box-shadow:var(--shadow)}
+.bench .who{display:flex; align-items:center; gap:7px; font-family:var(--display); font-size:.76rem; font-weight:600; color:var(--muted)}
+.swatch{width:9px; height:9px; border-radius:2px; flex:none}
+.bench .val{font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:1.4rem; font-weight:500; margin-top:5px; letter-spacing:-.02em}
+.bench .rel{font-family:var(--display); font-size:.76rem; font-weight:600; margin-top:2px}
+.rel.behind{color:var(--critical)} .rel.ahead{color:var(--good)} .rel.self{color:var(--faint)}
+
+/* ---- sections ---- */
+section{padding:38px 0 0; border-bottom:1px solid var(--rule)}
+section:last-of-type{border-bottom:0}
+.eyebrow{
+  font-size:.7rem; font-weight:600; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--faint); margin:0 0 9px;
+}
+.note{color:var(--muted); font-size:.96rem; margin:0 0 20px; max-width:66ch}
+
+/* ---- tiles ---- */
+.tiles{display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin-bottom:26px}
+.tile{background:var(--card); border:1px solid var(--rule); border-radius:4px; padding:13px 15px; box-shadow:var(--shadow)}
+.tile-label{font-size:.72rem; font-weight:600; color:var(--muted); letter-spacing:.02em}
+.tile-value{font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:1.42rem; font-weight:500; letter-spacing:-.025em; margin-top:4px; line-height:1.15}
+.tile-delta{font-family:var(--display); font-size:.74rem; font-weight:500; color:var(--faint); margin-top:3px}
+.tile-delta.bad{color:var(--critical)} .tile-delta.ok{color:var(--good)}
+
+/* ---- figures ---- */
+figure{margin:0 0 8px; background:var(--card); border:1px solid var(--rule); border-radius:4px; padding:16px 14px 10px; box-shadow:var(--shadow)}
+.chart-scroll{overflow-x:auto}
+svg{display:block; width:100%; height:auto; overflow:visible}
+.legend{display:flex; flex-wrap:wrap; gap:14px; padding:12px 2px 2px; font-family:var(--display); font-size:.76rem; font-weight:500; color:var(--muted)}
+.legend span{display:inline-flex; align-items:center; gap:6px}
+figcaption{font-size:.88rem; color:var(--muted); margin-top:10px; max-width:66ch}
+
+/* ---- tables ---- */
+details.twin{margin:6px 0 24px}
+details.twin summary{
+  cursor:pointer; font-family:var(--display); font-size:.78rem; font-weight:600;
+  color:var(--muted); padding:7px 0; list-style:none;
+}
+details.twin summary::-webkit-details-marker{display:none}
+details.twin summary::before{content:"▸ "; color:var(--faint)}
+details.twin[open] summary::before{content:"▾ "}
+.table-scroll{overflow-x:auto; border:1px solid var(--rule); border-radius:4px; background:var(--card)}
+table{border-collapse:collapse; width:100%; font-size:.86rem}
+th{
+  font-size:.7rem; font-weight:600; letter-spacing:.05em; text-transform:uppercase;
+  color:var(--muted); text-align:left; padding:9px 12px; border-bottom:1px solid var(--rule-strong);
+  white-space:nowrap; background:var(--sunk);
+}
+td{padding:8px 12px; border-bottom:1px solid var(--rule); white-space:nowrap}
+tr:last-child td{border-bottom:0}
+td.n{font-family:var(--mono); font-variant-numeric:tabular-nums; text-align:right}
+td.t{font-family:var(--mono); font-size:.8rem}
+
+/* ---- chips ---- */
+.chip{
+  display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:999px;
+  font-size:.71rem; font-weight:600; border:1px solid transparent;
+}
+.chip .dot{width:6px; height:6px; border-radius:50%}
+.chip.good{background:var(--good-wash); color:var(--good); border-color:var(--good)}
+.chip.warn{background:var(--warn-wash); color:var(--warn); border-color:var(--warn)}
+.chip.critical{background:var(--critical-wash); color:var(--critical); border-color:var(--critical)}
+.chip.good .dot{background:var(--good)} .chip.warn .dot{background:var(--warn)} .chip.critical .dot{background:var(--critical)}
+
+/* ---- verdict lines under the eval charts ---- */
+.eval-verdict{
+  font-size:.92rem; color:var(--ink); background:var(--sunk); border-left:3px solid var(--rule-strong);
+  padding:11px 14px; border-radius:0 4px 4px 0; margin:2px 0 26px; max-width:70ch;
+}
+.eval-verdict.negative{border-left-color:var(--critical)}
+
+.pair{display:grid; gap:22px; grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+
+/* ---- tooltip ---- */
+#tip{
+  position:fixed; z-index:50; pointer-events:none; opacity:0; transition:opacity .1s;
+  background:var(--card); border:1px solid var(--rule-strong); border-radius:4px;
+  box-shadow:0 6px 22px rgba(15,23,32,.16); padding:9px 11px; font-size:.8rem;
+  font-family:var(--display); min-width:150px;
+}
+#tip .tip-date{font-size:.7rem; color:var(--faint); margin-bottom:5px; letter-spacing:.04em}
+#tip .tip-row{display:flex; align-items:center; gap:7px; justify-content:space-between}
+#tip .tip-row b{font-family:var(--mono); font-variant-numeric:tabular-nums; font-weight:500}
+
+footer{padding:40px 0 0; color:var(--muted); font-size:.9rem}
+footer .rule{height:2px; background:var(--ink); margin-bottom:20px}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important}}
+@media (max-width:640px){
+  body{font-size:15.5px}
+  header{padding:34px 0 20px}
+  section{padding:30px 0 0}
+}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="mark">
+    <h1>Sentinel</h1>
+    <span class="sub">READOUT · <span class="num" id="stamp"></span></span>
+  </div>
+  <p class="standfirst">
+    A personal investment research system for a UK retail investor. It aggregates market data,
+    scores candidates with explicit reasoning, and enforces a risk layer no signal can override.
+    Its north-star requirement is this page: <strong>report honestly when the benchmark is winning.</strong>
+  </p>
+  <div id="provenance"></div>
+</header>
+
+<div class="verdict">
+  <p class="eyebrow">The question this system exists to answer</p>
+  <p class="lede" id="lede"></p>
+  <div class="bench-row" id="benchRow"></div>
+</div>
+
+<section>
+  <p class="eyebrow">Portfolio</p>
+  <h2>Where the money is</h2>
+  <p class="note">Satellite capital only — the core holding sits outside this system by design.</p>
+  <div class="tiles" id="tiles"></div>
+
+  <figure>
+    <div class="chart-scroll"><svg id="equity" viewBox="0 0 900 340" role="img"
+      aria-label="Paper equity against three benchmarks, all in GBP on one axis"></svg></div>
+    <div class="legend" id="equityLegend"></div>
+  </figure>
+  <figcaption>All four series are in GBP on <strong>one</strong> axis, indexed to the same starting
+    capital. A second axis would let any two lines be made to agree.</figcaption>
+  <details class="twin"><summary>Table view</summary>
+    <div class="table-scroll"><table id="equityTable"></table></div></details>
+
+  <h3>Open positions</h3>
+  <p class="note">Distance to stop is the column the brief leads on: it is what the risk layer acts on.</p>
+  <div class="table-scroll" style="margin-bottom:26px"><table id="positions"></table></div>
+</section>
+
+<section>
+  <p class="eyebrow">Risk</p>
+  <h2>The limits no signal can override</h2>
+  <p class="note">The risk engine imports nothing from the analysis or LLM layers, and never reads
+    conviction or composite score. It cannot be argued with by a persuasive memo.</p>
+  <div class="tiles" id="limits"></div>
+
+  <div class="pair">
+    <div>
+      <figure>
+        <div class="chart-scroll"><svg id="drawdown" viewBox="0 0 440 240" role="img"
+          aria-label="Drawdown from the high-water mark against the kill-switch threshold"></svg></div>
+      </figure>
+      <figcaption>Measured from the peak, not from starting capital — up 50% then down 16% from the
+        peak is still a kill-switch event.</figcaption>
+    </div>
+    <div>
+      <figure>
+        <div class="chart-scroll"><svg id="sectors" viewBox="0 0 440 240" role="img"
+          aria-label="Sector weight against the configured cap"></svg></div>
+      </figure>
+      <figcaption>Every sector against the same cap. The marker is the limit, not a target.</figcaption>
+    </div>
+  </div>
+</section>
+
+<section>
+  <p class="eyebrow">Ideas</p>
+  <h2>Everything generated, including what was refused</h2>
+  <p class="note">Rejected ideas are kept. Deleting them would make the rejection rate — the number
+    that tells you whether the synthesis prompts are drifting — unmeasurable.</p>
+  <div class="table-scroll"><table id="ideas"></table></div>
+  <p class="note" style="margin-top:10px" id="ideasNote"></p>
+</section>
+
+<section>
+  <p class="eyebrow">Evals</p>
+  <h2>Written to be able to return a negative verdict</h2>
+  <p class="note">A number without its sample size is not a result, so every rate here carries its
+    interval. These are the gates that can demote a module, and they are pre-committed in the spec
+    so they cannot be rationalised away after the fact.</p>
+
+  <figure>
+    <div class="chart-scroll"><svg id="hitrate" viewBox="0 0 900 158" role="img"
+      aria-label="Catalyst direction hit rate with its 95% Wilson interval against the coin-flip baseline"></svg></div>
+  </figure>
+  <p class="eval-verdict" id="hitVerdict"></p>
+
+  <div class="pair">
+    <div>
+      <figure>
+        <div class="chart-scroll"><svg id="materiality" viewBox="0 0 440 250" role="img"
+          aria-label="Mean absolute price move by materiality rating"></svg></div>
+      </figure>
+      <p class="eval-verdict negative" id="matVerdict"></p>
+    </div>
+    <div>
+      <figure>
+        <div class="chart-scroll"><svg id="conviction" viewBox="0 0 440 250" role="img"
+          aria-label="Mean return by conviction band"></svg></div>
+      </figure>
+      <p class="eval-verdict" id="convVerdict"></p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <p class="eyebrow">Data health</p>
+  <h2>A signal generated from bad data is a Sev-1</h2>
+  <p class="note">So a critical issue means the ticker was not scored at all — not scored and flagged.
+    Severity wears the reserved status palette rather than series colours.</p>
+  <div class="tiles" id="severity"></div>
+  <div class="table-scroll"><table id="freshness"></table></div>
+</section>
+
+<footer>
+  <div class="rule"></div>
+  <p><strong>Research output, not financial advice. All decisions and risk are the owner's.</strong></p>
+  <p>Rendered from a fabricated demonstration database. No automated order execution exists in this
+    system, against real money or otherwise.</p>
+</footer>
+
+</div>
+<div id="tip"></div>
+
+<script>
+const D = __DATA__;
+const $ = (id) => document.getElementById(id);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+const gbp = (v) => "£" + v.toLocaleString("en-GB", {minimumFractionDigits:2, maximumFractionDigits:2});
+const gbp0 = (v) => "£" + v.toLocaleString("en-GB", {maximumFractionDigits:0});
+const pct = (v, d=1) => (v*100).toFixed(d) + "%";
+const signed = (v, d=2) => (v>=0?"+":"") + (v*100).toFixed(d) + "%";
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+/* Axis labels a reader can hold in their head: 10,000 not 10,514. An unrounded
+   scale makes every value on the chart a subtraction. */
+function niceTicks(lo, hi, count){
+  const raw = (hi - lo) / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || 10 * mag;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) out.push(v);
+  return out;
+}
+const NS = "http://www.w3.org/2000/svg";
+const el = (n, attrs={}) => { const e = document.createElementNS(NS, n);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+
+$("stamp").textContent = D.generated;
+
+/* Provenance comes from the database's own stamp — the same signal the dashboard
+   reads — so a page rendered from the seeder cannot omit the warning and one
+   rendered from a real portfolio cannot wrongly carry it. */
+$("provenance").innerHTML = D.demo
+  ? `<div class="fabricated"><strong>Every number on this page is fabricated.</strong>
+     It is rendered from a database written by <span class="num">scripts/seed_demo.py</span> —
+     prices generated from a hash of the ticker, and a paper track record simulated over that
+     invented series. It is not a backtest and not a result. Nothing here says anything about
+     any strategy.</div>`
+  : `<div class="fabricated" style="background:var(--sunk);border-color:var(--rule-strong)">
+     <strong>Paper trading.</strong> These are simulated fills against real prices, not executed
+     trades. No order has been placed by this system, and none can be — it has no execution path.</div>`;
+
+/* ---------- the verdict ---------- */
+const SERIES_ORDER = ["Sentinel (paper)","B1 · global index (VWRP.LSE)","B2 · S&P 500 (SPY.US)","B3 · cash"];
+const SERIES_VAR = {"Sentinel (paper)":"--s1","B1 · global index (VWRP.LSE)":"--s2",
+                    "B2 · S&P 500 (SPY.US)":"--s3","B3 · cash":"--s4"};
+const SHORT = {"Sentinel (paper)":"Sentinel","B1 · global index (VWRP.LSE)":"B1 global index",
+               "B2 · S&P 500 (SPY.US)":"B2 S&P 500","B3 · cash":"B3 cash"};
+
+const verdict = Object.fromEntries(D.verdict.map(v => [v.series, v]));
+const me = verdict["Sentinel (paper)"];
+const losingTo = SERIES_ORDER.slice(1).filter(s => verdict[s] && verdict[s].pct > me.pct);
+
+$("lede").innerHTML = losingTo.length
+  ? `Sentinel is <em>behind ${losingTo.length} of its ${SERIES_ORDER.length-1} benchmarks.</em>`
+  : `Sentinel is ahead of every benchmark.`;
+
+$("benchRow").innerHTML = SERIES_ORDER.map(s => {
+  const v = verdict[s]; if (!v) return "";
+  const isMe = s === "Sentinel (paper)";
+  const rel = isMe ? ["self","since inception"]
+    : (v.pct > me.pct ? ["behind","Sentinel is behind it"] : ["ahead","Sentinel is ahead of it"]);
+  return `<div class="bench">
+    <div class="who"><span class="swatch" style="background:var(${SERIES_VAR[s]})"></span>${esc(SHORT[s])}</div>
+    <div class="val">${v.pct>=0?"+":""}${v.pct.toFixed(2)}%</div>
+    <div class="rel ${rel[0]}">${rel[1]}</div></div>`;
+}).join("");
+
+/* ---------- tiles ---------- */
+const s = D.snapshot;
+$("tiles").innerHTML = [
+  ["Satellite NAV", gbp(s.nav), `${me.pct>=0?"+":""}${me.pct.toFixed(2)}% since inception`,
+   me.pct < 0 ? "bad" : "ok"],
+  ["Cash", gbp(s.cash), "uninvested", ""],
+  ["Invested", gbp(s.invested), s.positions + " position(s)", ""],
+  ["Drawdown", pct(s.drawdown), "limit " + D.risk.drawdown_kill_pct.toFixed(0) + "%", "ok"],
+  ["High-water", gbp(s.high_water), "peak NAV", ""],
+].map(([l,v,d,k]) => `<div class="tile"><div class="tile-label">${l}</div>
+  <div class="tile-value">${v}</div><div class="tile-delta ${k}">${d}</div></div>`).join("");
+
+$("limits").innerHTML = [
+  ["Max single position", D.risk.max_single_position_pct.toFixed(0)+"%", "of satellite"],
+  ["Max sector", D.risk.max_sector_pct.toFixed(0)+"%", "of satellite"],
+  ["Risk per trade", D.risk.risk_per_trade_pct.toFixed(0)+"%", "if the stop fills"],
+  ["Short-term cap", D.risk.swing_max_pct.toFixed(0)+"%", "of satellite"],
+  ["Kill switch", D.risk.drawdown_kill_pct.toFixed(0)+"%", "drawdown from peak"],
+].map(([l,v,d]) => `<div class="tile"><div class="tile-label">${l}</div>
+  <div class="tile-value">${v}</div><div class="tile-delta">${d}</div></div>`).join("");
+
+/* ---------- equity chart ---------- */
+const dates = [...new Set(D.benchmarks.map(b => b.date))].sort();
+const xIndex = Object.fromEntries(dates.map((d,i) => [d,i]));
+const seriesData = {};
+for (const b of D.benchmarks) (seriesData[b.series] ||= []).push(b);
+for (const k in seriesData) seriesData[k].sort((a,b) => a.date < b.date ? -1 : 1);
+
+function drawEquity(){
+  const svg = $("equity"); svg.textContent = "";
+  const W=900, H=340, m={t:16,r:74,b:34,l:52};
+  const all = D.benchmarks.map(b => b.value);
+  const lo = Math.min(...all)*0.98, hi = Math.max(...all)*1.02;
+  const x = i => m.l + (i/(dates.length-1))*(W-m.l-m.r);
+  const y = v => m.t + (1-(v-lo)/(hi-lo))*(H-m.t-m.b);
+
+  for (const v of niceTicks(lo, hi, 5)){
+    const yy = y(v);
+    svg.appendChild(el("line",{x1:m.l,x2:W-m.r,y1:yy,y2:yy,stroke:css("--rule"),"stroke-width":1}));
+    const t = el("text",{x:m.l-9,y:yy+4,"text-anchor":"end",fill:css("--faint"),
+      "font-size":11,"font-family":css("--mono")});
+    t.textContent = Math.round(v).toLocaleString("en-GB"); svg.appendChild(t);
+  }
+  const yl = el("text",{x:m.l,y:m.t-4,fill:css("--faint"),"font-size":10.5,
+    "font-family":css("--display"),"letter-spacing":"0.06em"});
+  yl.textContent = "GBP"; svg.appendChild(yl);
+
+  const step = Math.ceil(dates.length/7);
+  for (let i=0;i<dates.length;i+=step){
+    const t = el("text",{x:x(i),y:H-m.b+18,"text-anchor":"middle",fill:css("--faint"),
+      "font-size":11,"font-family":css("--mono")});
+    t.textContent = dates[i].slice(0,7); svg.appendChild(t);
+  }
+
+  for (const name of SERIES_ORDER){
+    const rows = seriesData[name]; if (!rows) continue;
+    const d = rows.map((r,i) => `${i?"L":"M"}${x(xIndex[r.date]).toFixed(1)},${y(r.value).toFixed(1)}`).join("");
+    svg.appendChild(el("path",{d, fill:"none", stroke:css(SERIES_VAR[name]),
+      "stroke-width":name.startsWith("Sentinel")?2.4:1.8, "stroke-linejoin":"round","stroke-linecap":"round"}));
+    const last = rows[rows.length-1];
+    svg.appendChild(el("circle",{cx:x(xIndex[last.date]),cy:y(last.value),r:3.2,
+      fill:css(SERIES_VAR[name]),stroke:css("--card"),"stroke-width":1.5}));
+    const lbl = el("text",{x:x(xIndex[last.date])+8,y:y(last.value)+4,fill:css("--ink"),
+      "font-size":11.5,"font-family":css("--mono")});
+    lbl.textContent = Math.round(last.value).toLocaleString("en-GB"); svg.appendChild(lbl);
+  }
+
+  const hair = el("line",{y1:m.t,y2:H-m.b,stroke:css("--rule-strong"),"stroke-width":1,opacity:0});
+  svg.appendChild(hair);
+  const hit = el("rect",{x:m.l,y:m.t,width:W-m.l-m.r,height:H-m.t-m.b,fill:"transparent"});
+  svg.appendChild(hit);
+  const tip = $("tip");
+  hit.addEventListener("pointermove", ev => {
+    const box = svg.getBoundingClientRect();
+    const px = (ev.clientX - box.left) / box.width * W;
+    const i = Math.max(0, Math.min(dates.length-1, Math.round((px-m.l)/(W-m.l-m.r)*(dates.length-1))));
+    hair.setAttribute("x1",x(i)); hair.setAttribute("x2",x(i)); hair.setAttribute("opacity",1);
+    tip.innerHTML = `<div class="tip-date">${dates[i].slice(0,10)}</div>` + SERIES_ORDER.map(n => {
+      const r = seriesData[n] && seriesData[n].find(v => v.date === dates[i]);
+      if (!r) return "";
+      return `<div class="tip-row"><span><span class="swatch" style="display:inline-block;background:var(${SERIES_VAR[n]})"></span> ${esc(SHORT[n])}</span><b>${gbp0(r.value)}</b></div>`;
+    }).join("");
+    tip.style.opacity = 1;
+    tip.style.left = Math.min(ev.clientX+14, innerWidth-190) + "px";
+    tip.style.top = Math.min(ev.clientY+14, innerHeight-140) + "px";
+  });
+  hit.addEventListener("pointerleave", () => { tip.style.opacity=0; hair.setAttribute("opacity",0); });
+}
+
+$("equityLegend").innerHTML = SERIES_ORDER.map(n =>
+  `<span><span class="swatch" style="background:var(${SERIES_VAR[n]})"></span>${esc(n)}</span>`).join("");
+
+/* ---------- drawdown ---------- */
+function drawDrawdown(){
+  const svg = $("drawdown"); svg.textContent = "";
+  const W=440,H=240,m={t:14,r:14,b:30,l:44};
+  const eq = D.equity, n = eq.length;
+  const kill = -D.risk.drawdown_kill_pct/100;
+  const lo = Math.min(kill*1.06, Math.min(...eq.map(e=>e.drawdown))*1.15), hi = 0.004;
+  const x = i => m.l + (i/(n-1))*(W-m.l-m.r);
+  const y = v => m.t + (1-(v-lo)/(hi-lo))*(H-m.t-m.b);
+
+  for (let v=0; v>=Math.ceil(lo*100)/100; v-=0.05){
+    const yy=y(v);
+    svg.appendChild(el("line",{x1:m.l,x2:W-m.r,y1:yy,y2:yy,stroke:css("--rule"),"stroke-width":1}));
+    const t=el("text",{x:m.l-8,y:yy+4,"text-anchor":"end",fill:css("--faint"),"font-size":10.5,"font-family":css("--mono")});
+    t.textContent=(v*100).toFixed(0)+"%"; svg.appendChild(t);
+  }
+  const area = eq.map((e,i)=>`${i?"L":"M"}${x(i).toFixed(1)},${y(e.drawdown).toFixed(1)}`).join("")
+    + `L${x(n-1).toFixed(1)},${y(0)}L${x(0).toFixed(1)},${y(0)}Z`;
+  svg.appendChild(el("path",{d:area, fill:css("--s1"), opacity:.13}));
+  svg.appendChild(el("path",{d:eq.map((e,i)=>`${i?"L":"M"}${x(i).toFixed(1)},${y(e.drawdown).toFixed(1)}`).join(""),
+    fill:"none", stroke:css("--s1"), "stroke-width":1.8}));
+  svg.appendChild(el("line",{x1:m.l,x2:W-m.r,y1:y(kill),y2:y(kill),stroke:css("--critical"),"stroke-width":1.6}));
+  const kl = el("text",{x:W-m.r,y:y(kill)-7,"text-anchor":"end",fill:css("--critical"),
+    "font-size":10.5,"font-family":css("--display"),"font-weight":600});
+  kl.textContent = `kill switch ${(kill*100).toFixed(0)}%`; svg.appendChild(kl);
+}
+
+/* ---------- sector allocation ---------- */
+function drawSectors(){
+  const svg = $("sectors"); svg.textContent = "";
+  const W=440,H=240,m={t:18,r:52,b:30,l:96};
+  const rows = D.sectors, cap = rows.length ? rows[0].cap : .3;
+  const max = cap*1.15;
+  const x = v => m.l + (v/max)*(W-m.l-m.r);
+  const band = (H-m.t-m.b)/Math.max(rows.length,1);
+  const h = Math.min(24, band*0.5);
+
+  rows.forEach((r,i) => {
+    const cy = m.t + band*i + band/2;
+    const lbl = el("text",{x:m.l-10,y:cy+4,"text-anchor":"end",fill:css("--ink"),
+      "font-size":11.5,"font-family":css("--display")});
+    lbl.textContent = r.sector; svg.appendChild(lbl);
+    svg.appendChild(el("rect",{x:m.l,y:cy-h/2,width:Math.max(x(r.weight)-m.l,2),height:h,rx:3,
+      fill: r.over ? css("--critical") : css("--s1")}));
+    const v = el("text",{x:x(r.weight)+8,y:cy+4,fill:css("--ink"),"font-size":11.5,"font-family":css("--mono")});
+    v.textContent = pct(r.weight); svg.appendChild(v);
+  });
+  svg.appendChild(el("line",{x1:x(cap),x2:x(cap),y1:m.t-4,y2:H-m.b,stroke:css("--critical"),
+    "stroke-width":1.5,"stroke-dasharray":"none"}));
+  const cl = el("text",{x:x(cap),y:m.t-9,"text-anchor":"middle",fill:css("--critical"),
+    "font-size":10.5,"font-family":css("--display"),"font-weight":600});
+  cl.textContent = `cap ${pct(cap,0)}`; svg.appendChild(cl);
+}
+
+/* ---------- hit rate with Wilson interval ---------- */
+function drawHitRate(){
+  const svg = $("hitrate"); svg.textContent = "";
+  const a = D.evals.accuracy[0]; if (!a) return;
+  const W=900,H=158,m={t:34,r:60,b:40,l:130};
+  const x = v => m.l + v*(W-m.l-m.r);
+  const cy = m.t + 22;
+
+  for (let v=0; v<=1.0001; v+=0.25){
+    const t = el("text",{x:x(v),y:H-m.b+22,"text-anchor":"middle",fill:css("--faint"),
+      "font-size":11,"font-family":css("--mono")});
+    t.textContent = (v*100).toFixed(0)+"%"; svg.appendChild(t);
+  }
+  const axis = el("text",{x:(m.l+W-m.r)/2,y:H-2,"text-anchor":"middle",fill:css("--faint"),
+    "font-size":10.5,"font-family":css("--display"),"letter-spacing":"0.06em"});
+  axis.textContent = "HIT RATE"; svg.appendChild(axis);
+
+  svg.appendChild(el("line",{x1:x(.5),x2:x(.5),y1:m.t-14,y2:H-m.b+4,stroke:css("--rule-strong"),"stroke-width":1}));
+  const cf = el("text",{x:x(.5),y:m.t-20,"text-anchor":"middle",fill:css("--muted"),
+    "font-size":10.5,"font-family":css("--display"),"font-weight":600});
+  cf.textContent = "coin flip"; svg.appendChild(cf);
+
+  const lab = el("text",{x:m.l-14,y:cy+4,"text-anchor":"end",fill:css("--ink"),
+    "font-size":12,"font-family":css("--display")});
+  lab.textContent = a.label; svg.appendChild(lab);
+
+  // Muted ink, not the accent: this interval spans the coin flip, so it is not a finding.
+  const stroke = a.significant ? css("--s1") : css("--muted");
+  svg.appendChild(el("line",{x1:x(a.low),x2:x(a.high),y1:cy,y2:cy,stroke,"stroke-width":3,"stroke-linecap":"round"}));
+  for (const b of [a.low,a.high])
+    svg.appendChild(el("line",{x1:x(b),x2:x(b),y1:cy-7,y2:cy+7,stroke,"stroke-width":2}));
+  svg.appendChild(el("circle",{cx:x(a.rate),cy,r:5.5,fill:stroke,stroke:css("--card"),"stroke-width":2}));
+  const val = el("text",{x:x(a.high)+12,y:cy+4,fill:css("--ink"),"font-size":12.5,"font-family":css("--mono")});
+  val.textContent = pct(a.rate,0); svg.appendChild(val);
+}
+
+/* ---------- ordinal bar charts ---------- */
+function ordinalBars(svgId, rows, keyField, valField, fmt, title){
+  const svg = $(svgId); svg.textContent = "";
+  const W=440,H=250,m={t:32,r:16,b:44,l:52};
+  if (!rows.length) return;
+  const max = Math.max(...rows.map(r => r[valField])) * 1.25;
+  const band = (W-m.l-m.r)/rows.length;
+  const w = Math.min(46, band*0.56);
+  const y = v => m.t + (1-v/max)*(H-m.t-m.b);
+  const ramp = ["--ramp1","--ramp2","--ramp3","--ramp4","--ramp5"];
+
+  for (const v of niceTicks(0, max, 4)){
+    const yy=y(v);
+    svg.appendChild(el("line",{x1:m.l,x2:W-m.r,y1:yy,y2:yy,stroke:css("--rule"),"stroke-width":1}));
+    const t=el("text",{x:m.l-8,y:yy+4,"text-anchor":"end",fill:css("--faint"),"font-size":10.5,"font-family":css("--mono")});
+    t.textContent = fmt(v); svg.appendChild(t);
+  }
+  const yl = el("text",{x:m.l-40,y:m.t-12,fill:css("--faint"),"font-size":10.5,
+    "font-family":css("--display"),"letter-spacing":"0.06em"});
+  yl.textContent = title; svg.appendChild(yl);
+
+  rows.forEach((r,i) => {
+    const cx = m.l + band*i + band/2;
+    const hgt = Math.max((H-m.t-m.b) - (y(r[valField])-m.t), 2);
+    const shade = ramp[Math.min(i, ramp.length-1)];
+    svg.appendChild(el("rect",{x:cx-w/2, y:y(r[valField]), width:w, height:hgt, rx:3, fill:css(shade)}));
+    const v = el("text",{x:cx,y:y(r[valField])-8,"text-anchor":"middle",fill:css("--ink"),
+      "font-size":11.5,"font-family":css("--mono")});
+    v.textContent = fmt(r[valField]); svg.appendChild(v);
+    const l = el("text",{x:cx,y:H-m.b+20,"text-anchor":"middle",fill:css("--ink"),
+      "font-size":11.5,"font-family":css("--display")});
+    l.textContent = r[keyField]; svg.appendChild(l);
+    const n = el("text",{x:cx,y:H-m.b+35,"text-anchor":"middle",fill:css("--faint"),
+      "font-size":10,"font-family":css("--mono")});
+    n.textContent = "n=" + r.samples; svg.appendChild(n);
+  });
+}
+
+/* ---------- tables ---------- */
+function table(id, cols, rows){
+  const t = $(id);
+  t.innerHTML = "<thead><tr>" + cols.map(c => `<th>${esc(c.h)}</th>`).join("") + "</tr></thead><tbody>"
+    + rows.map(r => "<tr>" + cols.map(c => `<td class="${c.cls||""}">${c.f(r)}</td>`).join("") + "</tr>").join("")
+    + "</tbody>";
+}
+
+table("positions", [
+  {h:"Ticker", cls:"t", f:r=>esc(r.ticker)},
+  {h:"Class", f:r=>esc(r.class)},
+  {h:"Sector", f:r=>esc(r.sector)},
+  {h:"Shares", cls:"n", f:r=>r.shares},
+  {h:"Entry", cls:"n", f:r=>gbp(r.entry)},
+  {h:"Mark", cls:"n", f:r=>gbp(r.mark)},
+  {h:"Move", cls:"n", f:r=>`<span style="color:${r.move>=0?"var(--good)":"var(--critical)"}">${signed(r.move)}</span>`},
+  {h:"To stop", cls:"n", f:r=>pct(r.to_stop)},
+  {h:"Value", cls:"n", f:r=>gbp(r.value_gbp)},
+], D.positions);
+
+const ideas = D.ideas.slice(0, 14);
+table("ideas", [
+  {h:"As of", cls:"t", f:r=>esc(r.as_of)},
+  {h:"Ticker", cls:"t", f:r=>esc(r.ticker)},
+  {h:"Class", f:r=>esc(r.class)},
+  {h:"Conviction", f:r=>esc(r.conviction)},
+  {h:"Direction", f:r=>esc(r.direction)},
+  {h:"Score", cls:"n", f:r=>r.score.toFixed(0)},
+  {h:"Outcome", f:r=> r.accepted
+      ? `<span class="chip good"><span class="dot"></span>accepted</span>`
+      : `<span class="chip critical"><span class="dot"></span>rejected ×${r.rejections}</span>`},
+], ideas);
+const rejected = D.ideas.filter(i => !i.accepted).length;
+$("ideasNote").textContent =
+  `Showing ${ideas.length} of ${D.ideas.length} ideas. ${rejected} of ${D.ideas.length} were refused by the rules layer.`;
+
+table("freshness", [
+  {h:"Ticker", cls:"t", f:r=>esc(r.ticker)},
+  {h:"Last bar", cls:"t", f:r=>esc(r.last_bar)},
+  {h:"Age (days)", cls:"n", f:r=>r.age_days},
+  {h:"Status", f:r=>`<span class="chip ${r.status==="good"?"good":r.status==="warning"?"warn":"critical"}"><span class="dot"></span>${r.status==="good"?"current":r.status==="warning"?"1–4 days behind":"stale"}</span>`},
+  {h:"Fundamentals", cls:"t", f:r=>esc(r.fundamentals)},
+], D.freshness);
+
+const equityRows = D.equity.filter((_,i) => i % 12 === 0);
+table("equityTable", [
+  {h:"Date", cls:"t", f:r=>r.date.slice(0,10)},
+  {h:"NAV", cls:"n", f:r=>gbp(r.nav)},
+  {h:"Drawdown", cls:"n", f:r=>pct(r.drawdown,2)},
+], equityRows);
+
+$("severity").innerHTML = [
+  ["Critical (60d)", D.severity.critical, "critical"],
+  ["Warn (60d)", D.severity.warn, "warn"],
+  ["Info (60d)", D.severity.info, "good"],
+].map(([l,v,k]) => `<div class="tile"><div class="tile-label">${l}</div>
+  <div class="tile-value" style="color:${v>0?`var(--${k==="warn"?"warn":k})`:"var(--ink)"}">${v}</div>
+  <div class="tile-delta">${v===0?"none recorded":"tolerated, not blocking"}</div></div>`).join("");
+
+$("hitVerdict").textContent = D.evals.accuracy[0]
+  ? D.evals.accuracy[0].verdict + ` · ${D.evals.abstained} flat call(s) excluded — a call that commits to no direction cannot be right or wrong.`
+  : "no directional calls to score";
+$("matVerdict").textContent = D.evals.materiality_verdict;
+$("convVerdict").textContent = D.evals.conviction_verdict;
+
+/* ---------- draw, and redraw when the theme changes ---------- */
+function drawAll(){
+  drawEquity(); drawDrawdown(); drawSectors(); drawHitRate();
+  ordinalBars("materiality", D.evals.materiality, "bucket", "mean_abs_move",
+    v => (v*100).toFixed(1)+"%", "MEAN ABSOLUTE MOVE");
+  ordinalBars("conviction", D.evals.conviction, "conviction", "mean_return",
+    v => (v*100).toFixed(1)+"%", "MEAN RETURN");
+}
+drawAll();
+// SVG reads its colours from CSS variables at draw time, so a theme flip needs a redraw.
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawAll);
+new MutationObserver(drawAll).observe(document.documentElement, {attributes:true, attributeFilter:["data-theme"]});
+addEventListener("resize", () => { clearTimeout(window._rz); window._rz = setTimeout(drawAll, 150); });
+</script>
