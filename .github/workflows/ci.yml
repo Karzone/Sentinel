@@ -50,44 +50,35 @@ jobs:
       # Community Cloud installs requirements.txt and never installs the package
       # itself, so `import sentinel` fails in any child process that does not
       # inherit an explicit PYTHONPATH. That is invisible on every development
-      # machine and in every test above, because all of them have the package
-      # installed — an editable install makes it importable no matter what the
-      # environment says. This step is the only thing that can see it, and it
-      # exists because the seeder subprocess shipped broken exactly that way:
-      # the app crashed on its first boot with a CalledProcessError.
+      # machine, because an editable install makes the package importable no
+      # matter what the environment says. This step is the only thing that can
+      # see it, and it exists because the seeder subprocess shipped broken
+      # exactly that way: the app crashed on its first boot.
+      #
+      # scripts/check_hosted_boot.py drives a real client SESSION rather than
+      # stopping at /_stcore/health. Streamlit answers health long before it
+      # executes the app script — the script runs when a browser connects — so a
+      # health-only check passes against an app that throws on its first
+      # visitor. The first version of this step did exactly that.
       - name: Community Cloud deploy simulation
         run: |
           set -euo pipefail
-          # A venv with requirements.txt ONLY — no `uv sync`, no editable install.
+          # requirements.txt ONLY — no `uv sync`, no editable install.
           uv venv --python 3.12 /tmp/hosted
           uv pip install --python /tmp/hosted/bin/python -q -r requirements.txt
-          ! /tmp/hosted/bin/python -c "import sentinel" 2>/dev/null \
-            || { echo "the package is installed; this check would be vacuous"; exit 1; }
 
           export SENTINEL_DB=/tmp/hosted-demo.sqlite
           export SENTINEL_DASHBOARD_PASSWORD=ci-only-not-a-secret
           /tmp/hosted/bin/python -m streamlit run streamlit_app.py \
             --server.port 8599 --server.address 127.0.0.1 \
             --server.headless true --browser.gatherUsageStats false > /tmp/hosted.log 2>&1 &
-          for _ in $(seq 1 60); do
-            curl -sf http://127.0.0.1:8599/_stcore/health >/dev/null && break
-            sleep 1
-          done
-          curl -sf http://127.0.0.1:8599/_stcore/health >/dev/null \
-            || { echo "the hosted entry point never became healthy"; cat /tmp/hosted.log; exit 1; }
 
-          # Health alone is not enough: Streamlit serves a page that then throws.
-          # The seeded database is the proof the entry point actually ran.
-          for _ in $(seq 1 60); do [ -s "$SENTINEL_DB" ] && break; sleep 1; done
-          test -s "$SENTINEL_DB" \
-            || { echo "the demo database was never seeded"; cat /tmp/hosted.log; exit 1; }
-          /tmp/hosted/bin/python - <<'CHECK'
-          import sqlite3, os
-          row = sqlite3.connect(os.environ["SENTINEL_DB"]).execute(
-              "SELECT value FROM schema_meta WHERE key = 'demo_data'").fetchone()
-          assert row and row[0] == "true", f"database is not stamped as demo data: {row}"
-          print("hosted entry point booted and seeded a stamped demo database")
-          CHECK
+          # The checker refuses to run where `sentinel` is importable, so it
+          # cannot pass vacuously if this venv is ever built the wrong way.
+          /tmp/hosted/bin/python scripts/check_hosted_boot.py \
+            --port 8599 --db "$SENTINEL_DB" --timeout 90 \
+            || { echo "--- app log ---"; cat /tmp/hosted.log; exit 1; }
+
           if grep -qiE "Traceback|CalledProcessError" /tmp/hosted.log; then
             echo "the app logged an exception:"; cat /tmp/hosted.log; exit 1
           fi
