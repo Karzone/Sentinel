@@ -33,6 +33,7 @@ run offline with an empty `.env`.
 | Resend | Transactional mail for the daily digest | **Free** | 3,000/month, 100/day | $0 — **not configured** |
 | ntfy.sh | Mobile push for stop / kill-switch / pipeline events | **Free** | no account; the topic is the only credential | $0 |
 | GitHub Actions | CI | **Free** (private repo) | 2,000 min/month | $0 |
+| Streamlit Community Cloud | Optional demonstration hosting of the dashboard. Fabricated data only — `streamlit_app.py` refuses to serve a database without the demo stamp | **Free** | 1 private app; sleeps when idle; no persistent disk | $0 — **not deployed** |
 | Cloudflare Tunnel (`cloudflared`) | Publishes the loopback dashboard on an HTTPS hostname without opening a port. Optional; not required to run anything | **Free** | quick tunnels are rate-limited and get a random hostname; a named tunnel needs a free Cloudflare account + a domain | $0 |
 
 Budget guidance from the spec: start at **£40–70/month** total (one

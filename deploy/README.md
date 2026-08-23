@@ -224,3 +224,55 @@ misconfiguration should not be a single point of failure for your portfolio.
 - The two processes share a fate: whichever dies takes the other with it.
 
 These are tested in `tests/test_tunnel.py` against fake binaries, offline.
+
+---
+
+# Streamlit Community Cloud (demonstration only)
+
+Free hosting straight from the GitHub repo, with a URL you can open on a phone.
+The trade-off is absolute and worth stating first:
+
+**A Community Cloud deployment can only ever show fabricated data.** There is no
+persistent disk, no vendor keys and no way to ingest, so `streamlit_app.py`
+seeds a demo database from `scripts/seed_demo.py` on every cold start (~2.5s)
+and then **asserts the fabrication stamp before rendering anything**. Put a real
+database at that path and the app refuses to serve it. Use this to show someone
+the app; use the tunnel above to look at your own portfolio.
+
+## What is already in the repo
+
+| File | Why Community Cloud needs it |
+|---|---|
+| `streamlit_app.py` | Their runner wants a script at the repo root. Seeds the demo DB, copies secrets into the environment, refuses non-demo data. |
+| `requirements.txt` | They read neither `uv` nor `pyproject.toml`. Pinned to the versions the suite is green against; `tests/test_deploy_targets.py` fails if it drifts from `pyproject.toml`. |
+| `.streamlit/config.toml` | Already there — the accent colour, so `primaryColor` is not Streamlit's default red. |
+
+## The five clicks (only you can do these)
+
+Deploying requires authorising Streamlit's GitHub App against your account, so
+this part cannot be scripted from here.
+
+1. Sign in at **share.streamlit.io** with GitHub and grant access to
+   `Karzone/Sentinel` (private repos are supported on the free tier).
+2. **Create app** → repo `Karzone/Sentinel`, branch `main`, main file
+   `streamlit_app.py`.
+3. Open **Advanced settings → Secrets** *before* the first deploy and paste:
+   ```toml
+   SENTINEL_DASHBOARD_PASSWORD = "paste-a-long-random-string-here"
+   ```
+   Without it the app deploys and refuses to serve — fail-closed, by design.
+   With a weak one, the URL is guessable and so is the password.
+4. Deploy. First boot installs the pinned wheels and seeds the demo database.
+5. **Settings → Sharing**: leave it public *only* if you are happy for anyone
+   with the link to reach the password prompt; otherwise restrict viewing to
+   your own email. The app password is a second lock either way.
+
+## Keeping it honest
+
+- Every page carries the fabricated-data banner, driven by the database stamp
+  rather than by a flag anyone can forget.
+- Community Cloud never sets `SENTINEL_DASHBOARD_LOCAL`, so the gate takes its
+  fail-closed branch: no password, no service.
+- The app sleeps after inactivity; the next visitor waits for a cold start and
+  a fresh seed. That is fine for a demonstration and useless for a portfolio,
+  which is the distinction this whole section exists to keep.

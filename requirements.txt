@@ -1,0 +1,19 @@
+# For Streamlit Community Cloud ONLY.
+#
+# uv + pyproject.toml remain the source of truth for local development and CI;
+# Community Cloud reads neither, so this file mirrors the runtime deps plus the
+# `dashboard` extra. Versions are pinned to what the suite is green against —
+# an unpinned deploy would drift from tested code silently, which on a page that
+# reports calibration numbers is worse than not deploying.
+#
+# Keep in step with pyproject.toml when a dependency changes; tests/test_deploy_targets.py
+# fails if the two disagree.
+pydantic==2.13.4
+typer==0.27.1
+rich==15.0.0
+numpy==2.5.2
+pandas==3.0.5
+httpx==0.28.1
+python-dotenv==1.2.3
+streamlit==1.62.0
+altair==6.2.2
