@@ -46,6 +46,52 @@ jobs:
           uv run --with pytest-cov pytest -q tests/test_risk.py \
             --cov=sentinel.risk --cov-branch --cov-fail-under=100 --cov-report=term-missing
 
+      # The hosted deploy runs in an environment NOTHING else here reproduces:
+      # Community Cloud installs requirements.txt and never installs the package
+      # itself, so `import sentinel` fails in any child process that does not
+      # inherit an explicit PYTHONPATH. That is invisible on every development
+      # machine and in every test above, because all of them have the package
+      # installed — an editable install makes it importable no matter what the
+      # environment says. This step is the only thing that can see it, and it
+      # exists because the seeder subprocess shipped broken exactly that way:
+      # the app crashed on its first boot with a CalledProcessError.
+      - name: Community Cloud deploy simulation
+        run: |
+          set -euo pipefail
+          # A venv with requirements.txt ONLY — no `uv sync`, no editable install.
+          uv venv --python 3.12 /tmp/hosted
+          uv pip install --python /tmp/hosted/bin/python -q -r requirements.txt
+          ! /tmp/hosted/bin/python -c "import sentinel" 2>/dev/null \
+            || { echo "the package is installed; this check would be vacuous"; exit 1; }
+
+          export SENTINEL_DB=/tmp/hosted-demo.sqlite
+          export SENTINEL_DASHBOARD_PASSWORD=ci-only-not-a-secret
+          /tmp/hosted/bin/python -m streamlit run streamlit_app.py \
+            --server.port 8599 --server.address 127.0.0.1 \
+            --server.headless true --browser.gatherUsageStats false > /tmp/hosted.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8599/_stcore/health >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8599/_stcore/health >/dev/null \
+            || { echo "the hosted entry point never became healthy"; cat /tmp/hosted.log; exit 1; }
+
+          # Health alone is not enough: Streamlit serves a page that then throws.
+          # The seeded database is the proof the entry point actually ran.
+          for _ in $(seq 1 60); do [ -s "$SENTINEL_DB" ] && break; sleep 1; done
+          test -s "$SENTINEL_DB" \
+            || { echo "the demo database was never seeded"; cat /tmp/hosted.log; exit 1; }
+          /tmp/hosted/bin/python - <<'CHECK'
+          import sqlite3, os
+          row = sqlite3.connect(os.environ["SENTINEL_DB"]).execute(
+              "SELECT value FROM schema_meta WHERE key = 'demo_data'").fetchone()
+          assert row and row[0] == "true", f"database is not stamped as demo data: {row}"
+          print("hosted entry point booted and seeded a stamped demo database")
+          CHECK
+          if grep -qiE "Traceback|CalledProcessError" /tmp/hosted.log; then
+            echo "the app logged an exception:"; cat /tmp/hosted.log; exit 1
+          fi
+
       # The pipeline must run end to end with no vendor keys and no network.
       # This is the check that catches wiring bugs the unit tests cannot see —
       # it is how the config attribute mismatch in pipeline.portfolio_state was

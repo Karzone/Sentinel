@@ -58,9 +58,26 @@ def _is_demo(path: Path) -> bool:
 
 
 def _seed() -> None:
+    """Run the seeder in a child process.
+
+    PYTHONPATH is the load-bearing part. Community Cloud installs
+    requirements.txt and nothing else — the `sentinel` package itself is NEVER
+    installed, only checked out — so the parent reaches it through the
+    sys.path.insert above. That does not cross a process boundary, and
+    scripts/seed_demo.py imports `sentinel.analysis` on its first line. Without
+    this the child dies on ModuleNotFoundError, check=True re-raises it, and the
+    app crashes on its first boot with a CalledProcessError.
+
+    It is invisible in any environment where the package IS installed, which is
+    every development machine and every local test — hence the clean-venv boot
+    check in CI, which is the only thing that reproduces the deployed condition.
+    """
+    env = dict(os.environ)
+    src = str(ROOT / "src")
+    env["PYTHONPATH"] = src + os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else src
     subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "seed_demo.py"), "--db", str(DB)],
-        check=True, cwd=ROOT,
+        check=True, cwd=ROOT, env=env,
     )
 
 

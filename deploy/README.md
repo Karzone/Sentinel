@@ -255,7 +255,13 @@ this part cannot be scripted from here.
 1. Sign in at **share.streamlit.io** with GitHub and grant access to
    `Karzone/Sentinel` (private repos are supported on the free tier).
 2. **Create app** → repo `Karzone/Sentinel`, branch `main`, main file
-   `streamlit_app.py`.
+   `streamlit_app.py`. **In Advanced settings, set Python to 3.12 or newer.**
+   This is the one setting that cannot be fixed from the repo: Community Cloud
+   picks the interpreter in that dropdown and reads neither `pyproject.toml`'s
+   `requires-python` nor anything else here. `requirements.txt` pins numpy
+   2.5.x, which publishes no wheel below 3.12, so an older selection fails at
+   install with a wall of "no matching distribution" versions rather than
+   anything that names the real problem.
 3. Open **Advanced settings → Secrets** *before* the first deploy and paste:
    ```toml
    SENTINEL_DASHBOARD_PASSWORD = "paste-a-long-random-string-here"
@@ -266,6 +272,22 @@ this part cannot be scripted from here.
 5. **Settings → Sharing**: leave it public *only* if you are happy for anyone
    with the link to reach the password prompt; otherwise restrict viewing to
    your own email. The app password is a second lock either way.
+
+## What the CI step covers
+
+`ci.yml` has a **Community Cloud deploy simulation**: a venv built from
+`requirements.txt` alone, with the package deliberately *not* installed, then a
+headless boot of `streamlit_app.py` asserting it becomes healthy and seeds a
+stamped demo database. It first asserts `import sentinel` FAILS, because the
+check is vacuous otherwise.
+
+That step exists because this deploy shipped broken and nothing else could see
+it. The seeder runs in a child process, and the parent reaches the package only
+through a `sys.path` edit that does not cross a process boundary — so on
+Community Cloud the child died on `ModuleNotFoundError` and the app crashed on
+its first boot. Every local check passed throughout, because a development
+machine has the package installed and an editable install makes it importable
+whatever the environment says.
 
 ## Keeping it honest
 

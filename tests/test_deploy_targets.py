@@ -96,6 +96,28 @@ class TestHostedEntryPointServesOnlyFabricatedData:
         namespace = _run_entry_guard(ENTRY.read_text(), db)
         assert not namespace["stopped"], "the seeder's own output was rejected"
 
+    def test_the_seeder_child_is_given_a_path_to_the_package(self):
+        """Community Cloud installs requirements.txt and never the package, so
+        the parent reaches `sentinel` only through its own sys.path edit — which
+        does not cross a process boundary. Without PYTHONPATH the seeder child
+        dies on ModuleNotFoundError and the app crashes on first boot.
+
+        This is a structural pin, not proof: locally the package IS installed,
+        so the child would import it either way. The clean-venv boot in CI is
+        what actually reproduces the deployed condition."""
+        source = ENTRY.read_text()
+        seeder = source.split("def _seed()")[1].split("if not DB.exists()")[0]
+        assert "PYTHONPATH" in seeder, "the seeder child gets no path to the package"
+        assert "env=env" in seeder, "the environment is built but never passed"
+
+    def test_the_python_floor_is_stated_where_a_deployer_will_read_it(self):
+        """requirements.txt pins numpy 2.5.x, which has no wheel below 3.12.
+        Community Cloud picks the interpreter in a dropdown at deploy time and
+        reads neither pyproject's requires-python nor anything else in the repo,
+        so the only place this can be caught is the instructions."""
+        readme = (ROOT / "deploy" / "README.md").read_text()
+        assert "3.12" in readme.split("Streamlit Community Cloud")[1]
+
     def test_it_never_marks_the_session_local(self):
         """SENTINEL_DASHBOARD_LOCAL is what lets the gate serve without a
         password. A hosted app setting it would be an open portfolio."""
