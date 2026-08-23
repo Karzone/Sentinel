@@ -84,12 +84,43 @@ class MonteCarloResult:
     percentiles: dict[int, Decimal]
     strategy_return: Decimal | None = None
     strategy_percentile: float | None = None
+    #: Every simulated total return, so `place_strategy` can rank against the
+    #: actual distribution rather than interpolating between percentiles.
+    distribution: tuple[Decimal, ...] = ()
+    #: The strategy's average exposure. Random portfolios are fully invested, so
+    #: a strategy that sat in cash is not being compared like for like.
+    strategy_exposure: float | None = None
 
     @property
     def beats_median(self) -> bool | None:
         if self.strategy_return is None:
             return None
         return self.strategy_return > self.median_return
+
+    @property
+    def exposure_caveat(self) -> str | None:
+        """Random portfolios are always fully invested.
+
+        A strategy that averaged 15% exposure and "beat" them in a falling
+        market beat them by *being in cash*, which is a position, not a stock
+        selection skill — and it is the same confusion §5.1's exposure-adjusted
+        return exists to catch. Any B4 verdict drawn from a materially different
+        exposure has to carry this, or the percentile flatters.
+        """
+        if self.strategy_exposure is None:
+            return None
+        if self.strategy_exposure < 0.7:
+            return (
+                f"the strategy averaged only {self.strategy_exposure:.0%} invested while every "
+                f"random portfolio was fully invested, so this percentile mostly measures "
+                f"time spent in cash rather than stock selection"
+            )
+        if self.strategy_exposure > 1.3:
+            return (
+                f"the strategy averaged {self.strategy_exposure:.0%} invested against fully "
+                f"invested random portfolios, so it took more market risk to get here"
+            )
+        return None
 
     def verdict(self) -> str:
         if self.strategy_return is None:
@@ -98,12 +129,15 @@ class MonteCarloResult:
             return "no verdict"
         standing = f"{self.strategy_percentile:.0f}th percentile of {self.portfolios} random portfolios"
         if self.strategy_percentile < 50:
-            return (f"{standing} — worse than picking at random. On this evidence the "
+            body = (f"{standing} — worse than picking at random. On this evidence the "
                     "selection adds nothing.")
-        if self.strategy_percentile < 80:
-            return (f"{standing} — ahead of the median, but inside the range luck alone "
+        elif self.strategy_percentile < 80:
+            body = (f"{standing} — ahead of the median, but inside the range luck alone "
                     "produces. Not yet evidence of skill.")
-        return f"{standing} — outside what random selection produced on this sample."
+        else:
+            body = f"{standing} — outside what random selection produced on this sample."
+        caveat = self.exposure_caveat
+        return f"{body} Note: {caveat}." if caveat else body
 
 
 def random_portfolios(
@@ -168,17 +202,28 @@ def random_portfolios(
         portfolios=len(finals),
         median_return=percentile(50),
         percentiles={p: percentile(p) for p in (5, 25, 50, 75, 95)},
+        distribution=tuple(finals),
     )
 
 
-def place_strategy(result: MonteCarloResult, strategy_return: Decimal,
-                   distribution: Sequence[Decimal]) -> MonteCarloResult:
-    """Where the strategy's return falls in the random distribution."""
-    if not distribution:
+def place_strategy(
+    result: MonteCarloResult, strategy_return: Decimal,
+    distribution: Sequence[Decimal] | None = None,
+    *, strategy_exposure: float | None = None,
+) -> MonteCarloResult:
+    """Where the strategy's return falls in the random distribution.
+
+    This is the step that turns B4 from a table of percentiles into a verdict.
+    Without it the Monte Carlo is decoration: it says what luck produced but
+    never says whether the strategy did better than luck.
+    """
+    values = list(distribution if distribution is not None else result.distribution)
+    if not values:
         return result
-    below = sum(1 for value in distribution if value < strategy_return)
+    below = sum(1 for value in values if value < strategy_return)
     return MonteCarloResult(
         portfolios=result.portfolios, median_return=result.median_return,
         percentiles=result.percentiles, strategy_return=dec(strategy_return),
-        strategy_percentile=100.0 * below / len(distribution),
+        strategy_percentile=100.0 * below / len(values),
+        distribution=result.distribution, strategy_exposure=strategy_exposure,
     )
