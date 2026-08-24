@@ -163,12 +163,26 @@ def run(
     result = PipelineResult(as_of=as_of)
     report = quality.QualityReport(as_of)
 
-    for ticker in tickers:
+    for index, ticker in enumerate(tickers, start=1):
         outcome = score_ticker(conn, config, ticker, as_of, llm=llm)
         report.extend(outcome.issues)
         result.results.append(outcome)
         if persist and outcome.idea is not None and repo.get_idea(conn, outcome.idea.id) is None:
             repo.save_idea(conn, outcome.idea)
+        # One line per ticker, as it finishes. A 25-ticker run makes 50-100
+        # LLM calls sequentially and can take 15+ minutes; with no output it
+        # is indistinguishable from a hang, and "it runs forever" was the
+        # live report. This also streams into the dashboard's job log.
+        if outcome.skipped:
+            log.info("[%d/%d] %s — skipped: %s", index, len(tickers), ticker, outcome.skipped)
+        else:
+            idea_ = outcome.idea
+            log.info(
+                "[%d/%d] %s — composite %.0f · memo %s%s",
+                index, len(tickers), ticker, idea_.composite_score,
+                "yes" if idea_.memo is not None else "no",
+                f" · LLM error: {outcome.llm_error}" if outcome.llm_error else "",
+            )
 
     result.report = report
     if persist:

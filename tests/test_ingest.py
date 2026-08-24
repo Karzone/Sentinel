@@ -163,3 +163,19 @@ class TestIngestRecordsTheVendorThatAnswered:
         sources = dict(conn.execute(
             "SELECT ticker, source FROM fundamentals ORDER BY ticker").fetchall())
         assert sources == {"NVDA.US": "fmp", "ARM.US": "eodhd"}, sources
+
+
+def test_the_pipeline_reports_progress_per_ticker(conn, config, caplog):
+    """25 tickers x 2-4 sequential LLM calls is 15+ minutes; with no output it
+    is indistinguishable from a hang ("it runs forever" was the live report).
+    One line per ticker, as each finishes — which also streams into the
+    dashboard's job log."""
+    import logging
+
+    from sentinel import pipeline
+
+    with caplog.at_level(logging.INFO, logger="sentinel.pipeline"):
+        pipeline.run(conn, config, ["DEMO1.LSE", "DEMO3.US"])
+    lines = [r.message for r in caplog.records if "composite" in r.message or "skipped" in r.message]
+    assert any(m.startswith("[1/2] DEMO1.LSE") for m in lines), lines
+    assert any(m.startswith("[2/2] DEMO3.US") for m in lines), lines

@@ -319,6 +319,11 @@ def brief(
     if reason:
         console.print(f"[yellow]LLM off — {reason}. Scoring deterministically; every "
                       f"long-term idea will be rejected for a missing invalidation.[/]")
+    else:
+        console.print(
+            f"scoring {len(names)} tickers — 2-4 LLM calls each, sequential; "
+            f"expect roughly a minute per ticker. One progress line follows per ticker."
+        )
     run = pipeline.run(conn, config, names, as_of=as_of, llm=llm)
     state = pipeline.portfolio_state(conn, config, as_of=as_of)
     engine = RiskEngine(config.risk, sectors=config.sectors)
