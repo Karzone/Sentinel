@@ -617,6 +617,36 @@ def price_frame(conn: sqlite3.Connection, ticker: str, *, days: int = 365) -> pd
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["date", "close", "volume"])
 
 
+def conviction_board(
+    conn: sqlite3.Connection, *, min_score: int = 80, days: int = 14
+) -> tuple[list[Idea], Idea | None]:
+    """(qualifying ideas, best near-miss).
+
+    A "strong buy" here is strict by construction: the LATEST idea per ticker,
+    ACCEPTED by both the rules and risk layers, with composite >= min_score.
+    A high score that failed risk is not a buy at any threshold — showing it
+    would be exactly the bare-signal surface the spec forbids.
+
+    The near-miss is returned so an empty board can say "the best accepted
+    idea today is X at 74" instead of just "nothing" — an honest empty state
+    names the distance to the bar rather than quietly lowering it.
+    """
+    since = dt.date.today() - dt.timedelta(days=days)
+    risk = risk_outcomes(conn)
+    latest: dict[str, Idea] = {}
+    for idea_ in repo.get_ideas(conn, since=since, limit=1000):
+        # get_ideas returns newest first; keep the first seen per ticker.
+        latest.setdefault(idea_.ticker, idea_)
+    accepted = [
+        idea_ for idea_ in latest.values()
+        if not idea_.rejected_by_rules and risk.get(idea_.id) is True
+    ]
+    accepted.sort(key=lambda i: i.composite_score, reverse=True)
+    qualifying = [i for i in accepted if i.composite_score >= min_score]
+    near_miss = next((i for i in accepted if i.composite_score < min_score), None)
+    return qualifying, near_miss
+
+
 def list_reports(briefs_dir: str | Path) -> list[Path]:
     """Every written brief/review, newest first — the files `sentinel brief`
     and `sentinel weekly` leave in `paths.briefs`. The terminal was the only

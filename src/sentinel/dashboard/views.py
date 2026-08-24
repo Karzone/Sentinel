@@ -64,6 +64,106 @@ def _section(st, title: str, subtitle: str | None = None) -> None:
 # ---------------------------------------------------------------- 1. portfolio
 
 
+def conviction(st, ctx: Context) -> None:
+    st.markdown("### Conviction")
+    st.markdown(
+        '<p class="sx-note">The latest idea per ticker that cleared BOTH the rules and '
+        'risk layers, at or above your score bar. A high score that failed a check is '
+        'not shown at any threshold — this page never carries a signal without its '
+        'justification, so open a name to see exactly why it earned its place.</p>',
+        unsafe_allow_html=True,
+    )
+
+    bar = st.radio("Score bar", [70, 80, 90], index=1, horizontal=True,
+                   help="Composite score out of 100. The brief's email bar is 70.")
+    qualifying, near_miss = queries.conviction_board(ctx.conn, min_score=int(bar))
+
+    if not qualifying:
+        if near_miss is not None:
+            st.info(
+                f"Nothing clears {bar} today. The best ACCEPTED idea is "
+                f"**{near_miss.ticker}** at **{near_miss.composite_score:.0f}** — "
+                f"lower the bar to see it, or wait for a stronger day. The bar is "
+                f"not lowered silently.",
+                icon="📉",
+            )
+        else:
+            st.info(
+                "No accepted ideas at all in the last 14 days. Either the brief has "
+                "not run (Data health → Run brief), or every idea was rejected — "
+                "the Ideas page shows which layer said no and why.",
+                icon="📭",
+            )
+        return
+
+    chosen = st.session_state.get("conviction-open")
+    columns = st.columns(min(3, len(qualifying)), gap="medium")
+    for index, idea_ in enumerate(qualifying):
+        with columns[index % len(columns)]:
+            st.markdown(
+                ui.tile(
+                    f"{idea_.ticker} · {idea_.idea_class.value.replace('_', ' ')}",
+                    f"{idea_.composite_score:.0f}",
+                    delta=f"{idea_.conviction.value} conviction · {idea_.as_of}",
+                    mode=ctx.mode,
+                ),
+                unsafe_allow_html=True,
+            )
+            if st.button(f"Why {idea_.ticker}", key=f"conv-{idea_.id}"):
+                chosen = idea_.ticker
+                st.session_state["conviction-open"] = chosen
+
+    if not chosen or chosen not in {i.ticker for i in qualifying}:
+        st.caption("Open a name to see its statistics and the full justification.")
+        return
+
+    idea_ = next(i for i in qualifying if i.ticker == chosen)
+    st.divider()
+    _conviction_detail(st, ctx, idea_)
+
+
+def _conviction_detail(st, ctx: Context, item) -> None:
+    """Stats + the full why, for one board entry — the same sources the Search
+    page uses, so the two can never disagree about a ticker."""
+    verdict = queries.verdict_for(ctx.conn, item.ticker)
+    st.markdown(
+        ui.verdict_banner(verdict.stance, verdict.headline,
+                          status=STANCE_STATUS.get(verdict.stance), mode=ctx.mode),
+        unsafe_allow_html=True,
+    )
+    st.caption(f"Scored {item.as_of} · composite {item.composite_score:.0f}/100 · "
+               f"{item.conviction.value} conviction")
+
+    if item.memo is not None:
+        _section(st, "Thesis")
+        st.markdown(item.memo.thesis)
+        left, right = st.columns(2, gap="large")
+        with left:
+            _section(st, "Bull case")
+            st.markdown(item.memo.bull_case)
+        with right:
+            _section(st, "Bear case")
+            st.markdown(item.memo.bear_case)
+        _section(st, "What would prove this wrong",
+                 "An idea that cannot be wrong is not an idea.")
+        st.markdown(item.memo.invalidation)
+
+    st.divider()
+    _section(st, "Statistics",
+             "Computed by the same indicators the technical module scores with.")
+    _stat_tiles(st, ctx, queries.ticker_stats(ctx.conn, item.ticker))
+
+    prices = queries.price_frame(ctx.conn, item.ticker)
+    _section(st, "Price", "Adjusted close with the 50 and 200-day moving averages.")
+    _chart(st, charts.price_history(prices, ctx.mode,
+                                    crosses=queries.sma_crosses(prices)),
+           key=f"conv-price-{item.ticker}")
+
+    _section(st, "Module scores", "Shown as a deviation from neutral 50.")
+    frame = queries.module_scores_frame(item)
+    _chart(st, charts.module_scores(frame, ctx.mode), key=f"conv-mod-{item.ticker}")
+
+
 def portfolio(st, ctx: Context) -> None:
     st.markdown("### Portfolio")
     snapshot = queries.portfolio_snapshot(ctx.conn, ctx.config)
@@ -860,6 +960,7 @@ def _stat_tiles(st, ctx: Context, stats: dict) -> None:
 
 PAGES = [
     ("Portfolio", portfolio),
+    ("Conviction", conviction),
     ("Risk", risk),
     ("Ideas", ideas),
     ("Evals", evals),

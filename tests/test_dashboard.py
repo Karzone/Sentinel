@@ -990,3 +990,89 @@ class TestReportsListing:
 
     def test_a_missing_directory_is_empty_not_a_crash(self, tmp_path):
         assert queries.list_reports(tmp_path / "nope") == []
+
+
+class TestConvictionBoard:
+    """"Show me the strong buys" — with the spec's constraint intact: a signal
+    never appears without its justification, and a high score that failed a
+    layer is not a buy at any threshold."""
+
+    def _idea(self, ticker, score, *, rejected=()):
+        from sentinel.analysis import synthesis
+        from sentinel.domain.models import Signal
+
+        built = synthesis.build_idea(
+            ticker,
+            [Signal(module="technical", module_version="test-1", ticker=ticker,
+                    as_of=dt.date.today(), score=Decimal(score))],
+            dt.date.today(),
+        )
+        return built.model_copy(update={"rejected_by_rules": tuple(rejected)})
+
+    def _approve(self, conn, idea):
+        from sentinel.storage import audit
+        audit.record(conn, audit.AuditEvent.RISK_APPROVED, ticker=idea.ticker,
+                     payload={"idea_id": idea.id, "shares": 1})
+
+    def _refuse(self, conn, idea):
+        from sentinel.storage import audit
+        audit.record(conn, audit.AuditEvent.RISK_CHECK_FAILED, ticker=idea.ticker,
+                     payload={"idea_id": idea.id, "reasons": ["x"]})
+
+    def test_only_accepted_ideas_qualify_however_high_the_score(self, conn):
+        rules_reject = self._idea("A.US", 95, rejected=("R1: too good",))
+        risk_reject = self._idea("B.US", 93)
+        clean = self._idea("C.US", 85)
+        for idea in (rules_reject, risk_reject, clean):
+            repo.save_idea(conn, idea)
+        self._refuse(conn, risk_reject)
+        self._approve(conn, clean)
+        self._approve(conn, rules_reject)  # risk said yes; rules already said no
+
+        qualifying, _ = queries.conviction_board(conn, min_score=80)
+        assert [i.ticker for i in qualifying] == ["C.US"], (
+            "a 95 that failed a layer outranked an 85 that passed everything")
+
+    def test_the_bar_is_a_bar(self, conn):
+        low, high = self._idea("A.US", 79), self._idea("B.US", 80)
+        for idea in (low, high):
+            repo.save_idea(conn, idea)
+            self._approve(conn, idea)
+        qualifying, near = queries.conviction_board(conn, min_score=80)
+        assert [i.ticker for i in qualifying] == ["B.US"]
+        assert near is not None and near.ticker == "A.US", (
+            "the empty-state near-miss must name the best idea UNDER the bar")
+
+    def test_sorted_best_first(self, conn):
+        for ticker, score in (("A.US", 81), ("B.US", 92), ("C.US", 85)):
+            idea = self._idea(ticker, score)
+            repo.save_idea(conn, idea)
+            self._approve(conn, idea)
+        qualifying, _ = queries.conviction_board(conn, min_score=80)
+        assert [i.ticker for i in qualifying] == ["B.US", "C.US", "A.US"]
+
+    def test_only_the_latest_idea_per_ticker_counts(self, conn):
+        import datetime as dtm
+        from sentinel.analysis import synthesis
+        from sentinel.domain.models import Signal
+
+        def at(day, score):
+            return synthesis.build_idea(
+                "A.US",
+                [Signal(module="technical", module_version="test-1", ticker="A.US",
+                        as_of=day, score=Decimal(score))],
+                day,
+            )
+        stale = at(dtm.date.today() - dtm.timedelta(days=3), 95)
+        fresh = at(dtm.date.today(), 60)
+        for idea in (stale, fresh):
+            repo.save_idea(conn, idea)
+            self._approve(conn, idea)
+        qualifying, near = queries.conviction_board(conn, min_score=80)
+        assert qualifying == [], (
+            "a stale 95 must not outlive the fresh 60 that superseded it")
+        assert near is not None and near.composite_score == Decimal("60")
+
+    def test_an_empty_database_yields_nothing_and_no_near_miss(self, conn):
+        qualifying, near = queries.conviction_board(conn, min_score=80)
+        assert qualifying == [] and near is None
