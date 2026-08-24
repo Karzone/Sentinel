@@ -190,3 +190,54 @@ class TestFakes:
         client = ScriptedClient({"synthesis": {"thesis": "too thin"}})
         with pytest.raises(llm.SchemaViolation):
             client.complete_json(module="synthesis", system="s", prompt="p", schema=MEMO_SCHEMA)
+
+
+class TestUnavailabilityIsNamed:
+    """`available()` collapsed three differently-actionable blockers into one
+    silent False. The live failure that forced this: a valid key in .env, the
+    SDK not installed (it is an optional extra), `sentinel health` saying
+    "ready" because it checked only the key, and every long-term idea rejected
+    for a missing invalidation with nothing anywhere naming the cause."""
+
+    def _config(self, **overrides):
+        from sentinel.config import LlmConfig
+        return LlmConfig(**overrides)
+
+    def test_a_missing_sdk_names_the_install_command(self, monkeypatch):
+        from sentinel.llm.client import AnthropicClient
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        client = AnthropicClient(self._config())
+        monkeypatch.setattr(client, "_import_sdk", lambda: None)
+        reason = client.unavailable_reason()
+        assert reason and "uv sync --extra llm" in reason
+        assert client.available() is False
+
+    def test_a_missing_key_names_the_key(self, monkeypatch):
+        from sentinel.llm.client import AnthropicClient
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        client = AnthropicClient(self._config())
+        reason = client.unavailable_reason()
+        assert reason and "ANTHROPIC_API_KEY" in reason
+
+    def test_disabled_in_config_names_the_config(self, monkeypatch):
+        from sentinel.llm.client import AnthropicClient
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        client = AnthropicClient(self._config(enabled=False))
+        reason = client.unavailable_reason()
+        assert reason and "config" in reason
+
+    def test_available_means_no_reason(self, monkeypatch):
+        from sentinel.llm.client import AnthropicClient
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        client = AnthropicClient(self._config(), sdk=object())
+        assert client.unavailable_reason() is None
+        assert client.available() is True
+
+    def test_the_key_check_comes_before_the_sdk_check(self, monkeypatch):
+        """With neither key nor SDK, the key is the first thing to fix — an
+        install hint would send the user to the wrong step."""
+        from sentinel.llm.client import AnthropicClient
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        client = AnthropicClient(self._config())
+        monkeypatch.setattr(client, "_import_sdk", lambda: None)
+        assert "ANTHROPIC_API_KEY" in client.unavailable_reason()

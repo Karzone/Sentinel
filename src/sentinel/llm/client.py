@@ -200,11 +200,29 @@ class AnthropicClient:
         self.calls: list[LlmCallRecord] = []
 
     def available(self) -> bool:
+        return self.unavailable_reason() is None
+
+    def unavailable_reason(self) -> str | None:
+        """None when the client can run; otherwise the SPECIFIC blocker.
+
+        There are three distinct ways to be unavailable and they need three
+        different actions. `available()` collapsed them to one silent False,
+        which produced the worst live failure shape this repo knows: a valid
+        key in .env, the SDK not installed, `sentinel health` saying "ready"
+        (it only checked the key), and every long-term idea rejected for a
+        missing invalidation with nothing anywhere naming the cause.
+        """
         if not self.config.enabled:
-            return False
+            return "disabled in config ([llm] enabled = false)"
         if self._sdk is not None:
-            return True
-        return bool(api_key("ANTHROPIC_API_KEY")) and self._import_sdk() is not None
+            return None
+        if not api_key("ANTHROPIC_API_KEY"):
+            return "no ANTHROPIC_API_KEY (set it in .env)"
+        if self._import_sdk() is None:
+            return ("the anthropic SDK is not installed — run "
+                    "`uv sync --extra llm` (add --extra dashboard to keep the "
+                    "dashboard) and re-run")
+        return None
 
     def _import_sdk(self) -> Any:
         try:

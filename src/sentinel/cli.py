@@ -200,9 +200,13 @@ def health(config_path: Optional[str] = typer.Option(None, "--config")) -> None:
         table.add_row(str(row["kind"]), str(row["provider"]), status)
     console.print(table)
 
+    # Asked of the CLIENT, not the key: health used to check only the key and
+    # said "ready" while the pipeline (which also needs the SDK importable)
+    # was silently degrading — two surfaces disagreeing about one fact.
+    llm_reason = _llm(config).unavailable_reason()
     console.print(
         f"LLM: {config.llm.model} — "
-        + ("[green]ready[/]" if api_key('ANTHROPIC_API_KEY') else "[yellow]dormant (no key)[/]")
+        + ("[green]ready[/]" if llm_reason is None else f"[yellow]off: {llm_reason}[/]")
     )
 
     if not Path(config.paths.db).exists():
@@ -259,7 +263,14 @@ def idea(
     from .brief.render import _idea_block
 
     as_of = dt.date.today()
-    result = pipeline.score_ticker(conn, config, ticker.upper(), as_of, llm=_llm(config))
+    llm = _llm(config)
+    reason = llm.unavailable_reason()
+    if reason:
+        console.print(f"[yellow]LLM off — {reason}. Deterministic modules only: no memo "
+                      f"will be written, so a long-term idea is rejected for having no "
+                      f"invalidation. That degradation is intended; the silence about "
+                      f"WHY was not.[/]")
+    result = pipeline.score_ticker(conn, config, ticker.upper(), as_of, llm=llm)
     if result.skipped:
         console.print(f"[red]not scored[/] — {result.skipped}")
         conn.close()
@@ -303,7 +314,12 @@ def brief(
 
     as_of = dt.date.today()
     names = _tickers(config, universe, tickers)
-    run = pipeline.run(conn, config, names, as_of=as_of, llm=_llm(config))
+    llm = _llm(config)
+    reason = llm.unavailable_reason()
+    if reason:
+        console.print(f"[yellow]LLM off — {reason}. Scoring deterministically; every "
+                      f"long-term idea will be rejected for a missing invalidation.[/]")
+    run = pipeline.run(conn, config, names, as_of=as_of, llm=llm)
     state = pipeline.portfolio_state(conn, config, as_of=as_of)
     engine = RiskEngine(config.risk, sectors=config.sectors)
     blocked = run.report.blocked_tickers() if run.report else set()
