@@ -140,8 +140,11 @@ def today(st, ctx: Context) -> None:
                    "or the Search page — and press ☆ to track it here.")
     else:
         for row in favourites:
-            line = st.columns([2, 2, 2, 2, 2], gap="small")
-            line[0].markdown(f"**{row['ticker']}**")
+            line = st.columns([3, 2, 2, 2, 2], gap="small")
+            line[0].markdown(
+                f"**{row['name'] or row['ticker']}**  \n"
+                f"<span style='opacity:.6'>{row['ticker']}</span>",
+                unsafe_allow_html=True)
             line[1].markdown("—" if row["last_close"] is None
                              else f"{row['last_close']:,.2f}")
             line[2].markdown("—" if row["change_1d"] is None
@@ -967,29 +970,21 @@ def search(st, ctx: Context) -> None:
 
     tickers = queries.searchable_tickers(ctx.conn)
 
-    # The selectbox IS the type-ahead: start typing and it filters. The
-    # free-text path exists only for symbols the app has never fetched.
-    ticker = None
-    if tickers:
-        ticker = st.selectbox(
-            "Start typing a ticker", [""] + tickers, index=0, key="search-ticker",
-            help="Suggestions come from every stock the app has data for.",
-        ) or None
-    with st.expander("Can't find it? Fetch a new stock",
-                     expanded=not tickers):
-        typed = st.text_input(
-            "Symbol", key="search-any", placeholder="e.g. SOFI or VOD.LSE",
-            help="A bare symbol is read as a US listing (SOFI becomes SOFI.US).",
-        )
-        wanted = queries.normalize_ticker(typed)
-        if wanted and wanted not in tickers:
-            _offer_fetch(st, ctx, wanted)
-            return
-        if wanted:
-            ticker = wanted
-    if not ticker:
-        st.caption("Pick a stock above — or fetch a new one — to see its "
+    # ONE box: typing filters the stocks the app knows (the suggestions), and
+    # accept_new_options lets an unknown symbol through to the fetch offer —
+    # so "type SOFI" works whether or not SOFI has ever been fetched.
+    chosen = st.selectbox(
+        "Type a ticker — e.g. SOFI", tickers, index=None, key="search-ticker",
+        accept_new_options=True,
+        placeholder="Start typing… suggestions appear; a new symbol fetches it",
+    )
+    if not chosen:
+        st.caption("Pick a suggestion or type any symbol to see its "
                    "statistics, chart, news and the app's verdict.")
+        return
+    ticker = queries.normalize_ticker(chosen)
+    if ticker not in tickers:
+        _offer_fetch(st, ctx, ticker)
         return
 
     _ticker_detail(st, ctx, ticker)
@@ -1075,6 +1070,17 @@ def _trade_plan(st, ctx: Context, ticker: str) -> None:
 
 
 def _ticker_detail(st, ctx: Context, ticker: str) -> None:
+    # WHO this is, before anything else — two screenshots into a review, the
+    # owner could not tell which stock the page was talking about.
+    name = queries.company_name(ctx.conn, ticker)
+    st.markdown(f"## {name or ticker}")
+    stats_head = queries.ticker_stats(ctx.conn, ticker)
+    st.caption(
+        f"{ticker}"
+        + (f" · {stats_head.get('last_close'):,.2f}" if stats_head.get("last_close") else "")
+        + (f" · data to {stats_head.get('last_bar')}" if stats_head.get("last_bar") else "")
+    )
+
     verdict = queries.verdict_for(ctx.conn, ticker)
     stats = queries.ticker_stats(ctx.conn, ticker)
 

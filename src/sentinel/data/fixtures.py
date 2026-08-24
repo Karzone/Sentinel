@@ -109,8 +109,10 @@ class FixtureProvider:
         prior_net_income = (prior_revenue * net_margin * dec(round(rng.uniform(0.7, 1.2), 4))).quantize(Decimal("0.01"))
         equity = (revenue * dec(round(rng.uniform(0.4, 1.6), 3))).quantize(Decimal("0.01"))
         shares = Decimal(str(rng.randrange(20_000_000, 400_000_000)))
+        base = ticker.split(".")[0].capitalize()
         return Fundamentals(
             ticker=ticker,
+            company_name=f"{base} Corporation (demo)",
             as_of=dt.date(2024, 6, 30),
             currency=currency_for(ticker),
             sector=sector,

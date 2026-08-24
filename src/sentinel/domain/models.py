@@ -87,6 +87,9 @@ class Fundamentals(Frozen):
     ticker: str
     as_of: dt.date
     currency: str = GBP
+    #: The company's display name ("Arista Networks"). None on rows ingested
+    #: before this field existed; every surface falls back to the ticker.
+    company_name: str | None = None
     sector: str | None = None
     market_cap: Decimal | None = None
     revenue_ttm: Decimal | None = None

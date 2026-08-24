@@ -90,6 +90,7 @@ def assemble(
         ticker=ticker,
         as_of=as_of,
         currency=(prof.get("currency") or currency_for(ticker)),
+        company_name=(prof.get("companyName") or None),
         sector=(prof.get("sector") or "").lower() or None,
         market_cap=_num(prof, "marketCap", "mktCap"),
         revenue_ttm=revenue,

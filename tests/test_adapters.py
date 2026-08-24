@@ -439,3 +439,32 @@ class TestTheVendorsOwnReasonSurvives:
         with pytest.raises(ProviderError) as caught:
             FmpProvider(self.TOKEN, client=client)._get("x", {})
         assert "vendor said" not in str(caught.value)
+
+
+class TestCompanyNameIsCaptured:
+    """The detail page opened with no indication of WHICH stock it showed —
+    the name was never captured at ingest, so no surface could print it."""
+
+    def test_fmp_reads_the_profile_name(self):
+        f = fmp.assemble(
+            "ANET.US",
+            [{"date": "2025-06-30", "filingDate": "2025-08-02", "revenue": 1}],
+            [], [], [],
+            profile=[{"currency": "USD", "companyName": "Arista Networks"}],
+        )
+        assert f.company_name == "Arista Networks"
+
+    def test_eodhd_reads_general_name(self):
+        f = eodhd.parse_fundamentals("VOD.LSE", {
+            "General": {"Name": "Vodafone Group", "Sector": "Communication"},
+            "Highlights": {"RevenueTTM": 1},
+        })
+        assert f.company_name == "Vodafone Group"
+
+    def test_absent_names_stay_none_not_empty_string(self):
+        f = fmp.assemble(
+            "X.US",
+            [{"date": "2025-06-30", "filingDate": "2025-08-02", "revenue": 1}],
+            [], [], [], profile=[{"companyName": ""}],
+        )
+        assert f.company_name is None

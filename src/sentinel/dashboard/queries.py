@@ -647,6 +647,14 @@ def conviction_board(
     return qualifying, near_miss
 
 
+def company_name(conn: sqlite3.Connection, ticker: str) -> str | None:
+    """The display name from the latest fundamentals snapshot, if captured.
+    Rows ingested before the field existed have none; callers fall back to
+    the ticker rather than hiding the stock's identity."""
+    snapshot = repo.get_fundamentals(conn, ticker)
+    return snapshot.company_name if snapshot else None
+
+
 def favourites_overview(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """One row per starred ticker: price, day move, and the latest verdict.
 
@@ -668,8 +676,10 @@ def favourites_overview(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             if len(bars) >= 2 and _f(bars[-2].adjusted_close) else None
         )
         idea_ = latest_idea_for(conn, ticker)
+        snapshot = repo.get_fundamentals(conn, ticker)
         rows.append({
             "ticker": ticker,
+            "name": snapshot.company_name if snapshot else None,
             "last_close": last,
             "change_1d": move,
             "score": _f(idea_.composite_score) if idea_ else None,

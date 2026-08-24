@@ -104,6 +104,7 @@ def parse_fundamentals(ticker: str, payload: dict[str, Any]) -> Fundamentals | N
 
     return Fundamentals(
         ticker=ticker,
+        company_name=(general.get("Name") or None),
         as_of=as_of,
         currency=general.get("CurrencyCode") or currency_for(ticker),
         sector=(general.get("Sector") or "").lower() or None,

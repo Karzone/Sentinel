@@ -1173,3 +1173,15 @@ class TestFavourites:
         c = s.connect(old_db)
         c.row_factory = s.Row
         assert queries.favourites_overview(c) == []
+
+
+class TestCompanyName:
+    def test_round_trips_through_storage_and_falls_back_to_none(self, conn):
+        from decimal import Decimal as D
+        from sentinel.domain.models import Fundamentals
+
+        repo.save_fundamentals(conn, [Fundamentals(
+            ticker="ANET.US", as_of=dt.date(2026, 8, 1), currency="USD",
+            company_name="Arista Networks", revenue_ttm=D("1"))], source="t")
+        assert queries.company_name(conn, "ANET.US") == "Arista Networks"
+        assert queries.company_name(conn, "NOPE.US") is None
