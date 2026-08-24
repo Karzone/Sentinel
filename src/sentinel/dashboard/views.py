@@ -711,8 +711,10 @@ def _run_jobs_panel(st, ctx: Context) -> None:
             with left:
                 st.markdown("**Fetch latest data** — prices, fundamentals and "
                             "news (`sentinel ingest`).")
+                # 800 matches the CLI default and is what 12-1 momentum
+                # needs (~13 months of bars); 600 left that module blind.
                 history = st.number_input("Days of price history", min_value=30,
-                                          max_value=2000, value=600, step=10)
+                                          max_value=2000, value=800, step=10)
                 if st.button("Run ingest"):
                     _start_job(st, ctx, "ingest",
                                ["--universe", universe, "--history", str(int(history))])
