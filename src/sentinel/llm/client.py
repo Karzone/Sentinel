@@ -204,18 +204,55 @@ _WIRE_UNSUPPORTED = frozenset({
 
 
 def wire_schema(schema: Any) -> Any:
-    """A deep copy of `schema` with the keywords the API rejects removed.
+    """A deep copy of `schema` with the keywords the API rejects removed —
+    and restated as PROSE in the description, so the model still sees them.
 
     The FULL schema stays the contract: `validate()` runs it against every
     response, and a bound the API never saw still triggers the repair turn.
-    Only the copy that goes over the wire is relaxed.
+    But a silently-dropped bound costs a full extra API call every time the
+    model overruns it (live: `summary` came back 480/400 characters and
+    `rationale` 669/400 on the FIRST real run) — the model cannot honour a
+    limit it was never told. The hint makes attempt 1 usually pass; the
+    repair turn stays as the backstop, not the norm.
     """
     if isinstance(schema, dict):
-        return {key: wire_schema(value) for key, value in schema.items()
-                if key not in _WIRE_UNSUPPORTED}
+        wired = {key: wire_schema(value) for key, value in schema.items()
+                 if key not in _WIRE_UNSUPPORTED}
+        hint = _bounds_hint(schema)
+        if hint:
+            existing = wired.get("description", "")
+            wired["description"] = f"{existing} ({hint})".strip() if existing else hint
+        return wired
     if isinstance(schema, list):
         return [wire_schema(item) for item in schema]
     return schema
+
+
+def _bounds_hint(node: dict[str, Any]) -> str:
+    """The stripped constraints, as words. Phrased without the JSON-Schema
+    keyword names so a hint is never mistaken for a live constraint."""
+    hints: list[str] = []
+    low, high = node.get("minimum"), node.get("maximum")
+    if low is not None and high is not None:
+        hints.append(f"value between {low} and {high}")
+    elif low is not None:
+        hints.append(f"value at least {low}")
+    elif high is not None:
+        hints.append(f"value at most {high}")
+    short, long = node.get("minLength"), node.get("maxLength")
+    if long is not None:
+        hints.append(f"at most {long} characters"
+                     + (f", at least {short}" if short is not None else ""))
+    elif short is not None:
+        hints.append(f"at least {short} characters")
+    few, many = node.get("minItems"), node.get("maxItems")
+    if few is not None and many is not None:
+        hints.append(f"{few} to {many} items")
+    elif many is not None:
+        hints.append(f"at most {many} items")
+    elif few is not None:
+        hints.append(f"at least {few} items")
+    return "; ".join(hints)
 
 
 class AnthropicClient:

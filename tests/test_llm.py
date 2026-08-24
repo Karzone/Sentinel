@@ -341,3 +341,44 @@ class TestWireSchema:
         wire = str(sent["output_config"])
         assert "minimum" not in wire
         assert "json_schema" in wire
+
+
+class TestStrippedBoundsBecomeProse:
+    """A silently-dropped bound costs a full repair call every time the model
+    overruns it — live, the very first run repaired twice (`summary` 480/400
+    chars, `rationale` 669/400). The model cannot honour a limit it was never
+    told, so the wire copy restates each stripped bound in the description."""
+
+    def test_a_max_length_is_restated_in_words(self):
+        from sentinel.llm.client import wire_schema
+
+        wired = wire_schema({"type": "string", "maxLength": 400})
+        assert wired == {"type": "string", "description": "at most 400 characters"}
+
+    def test_numeric_bounds_are_restated(self):
+        from sentinel.llm.client import wire_schema
+
+        wired = wire_schema({"type": "integer", "minimum": 1, "maximum": 1825})
+        assert wired["description"] == "value between 1 and 1825"
+
+    def test_an_existing_description_is_kept_and_extended(self):
+        from sentinel.llm.client import wire_schema
+
+        wired = wire_schema({"type": "string", "maxLength": 600,
+                             "description": "One-paragraph thesis."})
+        assert wired["description"] == "One-paragraph thesis. (at most 600 characters)"
+
+    def test_the_hint_never_uses_schema_keyword_names(self):
+        """So a hint can never be mistaken for a live constraint — and the
+        wire-clean assertions elsewhere stay meaningful."""
+        from sentinel.llm.client import wire_schema
+
+        wired = wire_schema({"type": "integer", "minimum": 1, "maximum": 5,
+                             "description": "clarity"})
+        for keyword in ("minimum", "maximum", "maxLength", "minItems"):
+            assert keyword not in str(wired)
+
+    def test_a_bound_free_schema_gains_no_description(self):
+        from sentinel.llm.client import wire_schema
+
+        assert wire_schema({"type": "boolean"}) == {"type": "boolean"}
