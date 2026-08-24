@@ -46,11 +46,21 @@ def test_a_vendor_outage_blocks_only_the_ticker_it_touched(conn, config, monkeyp
     assert "DEMO1.LSE" in result.report.blocked_tickers()
 
 
-def test_checks_run_against_the_database_not_just_the_fetched_delta(conn, config):
+def test_checks_run_against_the_database_not_just_the_fetched_delta(conn, config, monkeypatch):
     """Re-ingesting only today must still validate the whole stored series."""
     old = dt.date.today() - dt.timedelta(days=400)
     ingest.ingest(conn, config, ["DEMO1.LSE"], as_of=old, history_days=500)
-    # Now ask for a run dated today while having ingested nothing since `old`.
+
+    # A vendor with nothing new — explicitly, rather than relying on the
+    # zero-day window. history_days=0 only returned no bars on a weekend: on a
+    # Monday the fixture happily produced today's bar, the stored series was
+    # genuinely fresh, and this test failed by calendar.
+    class NothingNew:
+        name = "fixture"
+        def available(self): return True
+        def fetch_bars(self, ticker, start, end): return []
+
+    monkeypatch.setattr(ingest.registry, "price_provider", lambda _c: NothingNew())
     result = ingest.ingest(
         conn, config, ["DEMO1.LSE"], as_of=dt.date.today(), history_days=0, with_news=False
     )

@@ -416,6 +416,155 @@ def readout(
 # ---------------------------------------------------------------- paper
 
 
+def _fx_rate(fx, currency: str) -> Decimal:
+    """GBP per unit of `currency`, from the archived rate set.
+
+    Falls back to 1 with a warning when no rate was ever ingested: refusing to
+    record a real holding over a missing FX row would leave the book lying by
+    omission, which is worse than a mark that is off by the exchange rate and
+    says so.
+    """
+    if currency == "GBP":
+        return Decimal("1")
+    rate = fx.rates.get(currency)
+    if rate is None:
+        console.print(f"[yellow]no {currency}/GBP rate ingested — recording at 1:1; "
+                      f"GBP values for this position are wrong until FX is ingested[/]")
+        return Decimal("1")
+    return Decimal(str(rate))
+
+
+@paper_app.command("buy")
+def paper_buy(
+    ticker: str = typer.Argument(..., help="e.g. NVDA.US"),
+    shares: int = typer.Option(..., "--shares", help="Number of shares actually held."),
+    price: str = typer.Option(..., "--price", help="Fill price, in the instrument's own currency."),
+    date: Optional[str] = typer.Option(None, "--date", help="Fill date (YYYY-MM-DD), default today."),
+    stop: Optional[str] = typer.Option(None, "--stop", help="Your stop, same currency as the price."),
+    idea_class: str = typer.Option("long_term", "--class", help="long_term | swing"),
+    note: str = typer.Option("", "--note", help="Why you hold it / what would make you sell."),
+    config_path: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Record a position you ALREADY hold at your real broker.
+
+    This writes the fill into the paper ledger so the dashboard, the risk layer
+    and the brief all see your actual book instead of an empty one. It never
+    places an order anywhere — Sentinel has no broker connection, by design.
+
+    Recording reality is never refused: if the position breaks a limit, the
+    risk layer says so loudly, because a limit you are already past is exactly
+    what it exists to surface — but the truth goes in the book regardless.
+    """
+    from .domain.enums import IdeaClass
+    from .domain.models import Position
+    from .money import dec
+    from .risk import sector_allocation
+    from . import pipeline
+    from .data.base import currency_for
+    from .storage import audit, repo
+
+    config = _config(config_path)
+    conn = _db(config, create=True)
+    opened = dt.date.fromisoformat(date) if date else dt.date.today()
+    entry = dec(price)
+    if shares <= 0 or entry <= 0:
+        console.print("[red]shares and price must be positive[/]")
+        raise typer.Exit(EXIT_FAILURE)
+    stop_d = dec(stop) if stop else None
+    if stop_d is not None and stop_d >= entry:
+        # A long's stop above its entry is almost always a typo, and a typo
+        # here silently corrupts every to-stop and risk number downstream.
+        console.print(f"[red]stop {stop_d} is at or above entry {entry} — for a long "
+                      f"position the stop sits below the entry[/]")
+        raise typer.Exit(EXIT_FAILURE)
+
+    state = pipeline.portfolio_state(conn, config, as_of=opened)
+    position = Position(
+        ticker=ticker.upper(), idea_id="manual", idea_class=IdeaClass(idea_class),
+        sector=config.sector_of(ticker), opened_on=opened, shares=shares,
+        entry=entry, currency=currency_for(ticker),
+        fx_rate_at_entry=_fx_rate(state.fx, currency_for(ticker)),
+        stop=stop_d, invalidation=note,
+    )
+    pid = repo.save_position(conn, position)
+    cost = position.gbp_cost_basis()
+    cash = state.cash - cost
+    nav = state.nav  # cash became stock at the same value; nav is unchanged at the fill
+    repo.save_equity_point(conn, opened, nav, cash, max(state.high_water_mark, nav))
+    audit.record(conn, audit.AuditEvent.POSITION_OPENED, payload={
+        "id": pid, "ticker": position.ticker, "shares": shares, "entry": str(entry),
+        "stop": None if stop_d is None else str(stop_d), "manual": True,
+        "gbp_cost": str(cost),
+    })
+    conn.commit()
+
+    console.print(f"recorded {shares} × {position.ticker} @ {entry} {position.currency} "
+                  f"(£{cost:,.2f}) · cash £{cash:,.2f}")
+    if cash < 0:
+        console.print(f"[yellow]cash is negative — satellite capital in sentinel.toml is "
+                      f"£{config.satellite_capital_gbp:,.0f}; raise it to match the account "
+                      f"this book mirrors[/]")
+
+    # Advisory, never blocking: the book must match the broker even when the
+    # broker's book breaks the rules — especially then.
+    fresh = pipeline.portfolio_state(conn, config, as_of=opened)
+    exposure = fresh.exposure_gbp(position)
+    single_cap = config.risk.max_single_position_pct / Decimal("100")
+    if fresh.satellite_capital and exposure / fresh.satellite_capital > single_cap:
+        console.print(f"[yellow]over the single-position limit: "
+                      f"{exposure / fresh.satellite_capital:.1%} of satellite vs "
+                      f"{single_cap:.0%} cap[/]")
+    cap = config.risk.max_sector_pct / Decimal("100")
+    for sector, weight in sector_allocation(fresh).items():
+        if weight >= cap:
+            console.print(f"[yellow]sector {sector} is at {weight:.1%} of a {cap:.0%} cap[/]")
+    conn.close()
+
+
+@paper_app.command("sell")
+def paper_sell(
+    ticker: str = typer.Argument(...),
+    price: str = typer.Option(..., "--price", help="Exit price, instrument currency."),
+    date: Optional[str] = typer.Option(None, "--date", help="Exit date, default today."),
+    config_path: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """Record that you closed a position at your real broker."""
+    from .domain.enums import PositionStatus
+    from .money import dec
+    from . import pipeline
+    from .storage import audit, repo
+
+    config = _config(config_path)
+    conn = _db(config)
+    closed_on = dt.date.fromisoformat(date) if date else dt.date.today()
+    exit_price = dec(price)
+
+    open_here = [p for p in repo.get_open_positions(conn) if p.ticker == ticker.upper()]
+    if not open_here:
+        console.print(f"[red]no open position in {ticker.upper()}[/]")
+        raise typer.Exit(EXIT_FAILURE)
+    position = open_here[0]
+    closed = position.model_copy(update={
+        "status": PositionStatus.CLOSED_MANUAL, "closed_on": closed_on, "exit_price": exit_price,
+    })
+    repo.save_position(conn, closed)
+
+    state = pipeline.portfolio_state(conn, config, as_of=closed_on)
+    proceeds = exit_price * Decimal(position.shares) * position.fx_rate_at_entry
+    cash = state.cash + proceeds
+    repo.save_equity_point(conn, closed_on, state.nav, cash,
+                           max(state.high_water_mark, state.nav))
+    audit.record(conn, audit.AuditEvent.POSITION_CLOSED, payload={
+        "ticker": position.ticker, "exit": str(exit_price), "manual": True,
+        "gbp_proceeds": str(proceeds),
+    })
+    conn.commit()
+    pnl = (exit_price - position.entry) * Decimal(position.shares) * position.fx_rate_at_entry
+    console.print(f"closed {position.shares} × {position.ticker} @ {exit_price} · "
+                  f"P&L £{pnl:,.2f} · cash £{cash:,.2f}")
+    conn.close()
+
+
 @paper_app.command("status")
 def paper_status(config_path: Optional[str] = typer.Option(None, "--config")) -> None:
     """Open positions, distance to stop, and drawdown from the high-water mark."""

@@ -254,8 +254,11 @@ def ideas(st, ctx: Context) -> None:
     if conviction != "All":
         view = view[view["conviction"] == conviction]
 
+    # The id is the idea's internal UUID — it joins ideas to audit events and
+    # positions, and the "Open an idea" selector below uses it. As a table
+    # column it is 36 characters of noise, so it is dropped from display only.
     st.dataframe(
-        view, width="stretch", hide_index=True,
+        view.drop(columns=["id"]), width="stretch", hide_index=True,
         column_config={"score": st.column_config.ProgressColumn(
             "Composite", format="%.0f", min_value=0, max_value=100)},
     )
@@ -529,10 +532,34 @@ def search(st, ctx: Context) -> None:
     _stat_tiles(st, ctx, stats)
 
     st.divider()
-    _section(st, "Price", "Adjusted close, with the 50 and 200-day moving averages.")
-    _chart(st, charts.price_history(queries.price_frame(ctx.conn, ticker), ctx.mode),
+    _section(st, "Price",
+             "Adjusted close with the 50 and 200-day moving averages. Triangles mark "
+             "golden/death crosses — trend events the technical module also sees, "
+             "not buy/sell advice; the verdict above is the system's actual opinion.")
+    prices = queries.price_frame(ctx.conn, ticker)
+    _chart(st, charts.price_history(prices, ctx.mode,
+                                    crosses=queries.sma_crosses(prices)),
            key=f"price-{ticker}")
-    _table_twin(st, queries.price_frame(ctx.conn, ticker).tail(60))
+    _table_twin(st, prices.tail(60))
+
+    news = queries.news_frame(ctx.conn, ticker)
+    st.divider()
+    _section(st, "Recent news",
+             "What the sentiment module read — captured by the news vendor at each "
+             "ingest, last 14 days.")
+    if news.empty:
+        st.caption("No stored headlines for this ticker in the last 14 days. "
+                   "News arrives with `sentinel ingest` (Finnhub key required).")
+    else:
+        st.dataframe(
+            news, width="stretch", hide_index=True,
+            column_config={
+                "published": st.column_config.DateColumn("Published"),
+                "headline": st.column_config.TextColumn("Headline", width="large"),
+                "source": st.column_config.TextColumn("Source"),
+                "url": st.column_config.LinkColumn("Link", display_text="open"),
+            },
+        )
 
     if verdict.as_of is not None:
         st.divider()

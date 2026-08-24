@@ -813,3 +813,93 @@ def _idea(ticker: str, *, rejected: tuple[str, ...] = (), score: Decimal = Decim
                         confidence=Decimal("0.8"), notes="fixture"),),
         composite_score=score, rejected_by_rules=rejected,
     )
+
+
+class TestSmaCrosses:
+    """Buy/sell *events* on the price chart — golden/death crosses, plotted
+    where they happened. Deliberately not a prediction: the verdict banner is
+    the system's opinion; these markers only report what the averages did."""
+
+    def _frame(self, closes):
+        import pandas as pd
+        base = dt.date(2024, 1, 1)
+        return pd.DataFrame({
+            "date": [base + dt.timedelta(days=i) for i in range(len(closes))],
+            "close": closes,
+        })
+
+    def test_a_cross_is_found_where_the_fast_average_overtakes(self):
+        # 250 days: long decline (SMA50 below SMA200) then a strong recovery —
+        # the recovery must produce exactly one golden cross.
+        closes = [200 - i * 0.5 for i in range(220)] + [90 + i * 8 for i in range(80)]
+        crosses = queries.sma_crosses(self._frame(closes))
+        golden = crosses[crosses["kind"] == "golden"]
+        assert len(golden) == 1
+        assert "Golden cross" in golden.iloc[0]["label"]
+
+    def test_a_flat_series_has_no_crosses(self):
+        crosses = queries.sma_crosses(self._frame([100.0] * 300))
+        assert crosses.empty
+
+    def test_too_little_history_yields_none_rather_than_noise(self):
+        """With under 200 bars there is no SMA200; inventing crosses from a
+        partial window would be a signal fabricated from missing data."""
+        closes = [200 - i * 0.5 for i in range(150)]
+        assert queries.sma_crosses(self._frame(closes)).empty
+
+    def test_the_marker_carries_the_price_it_sits_at(self):
+        closes = [200 - i * 0.5 for i in range(220)] + [90 + i * 8 for i in range(80)]
+        frame = self._frame(closes)
+        crosses = queries.sma_crosses(frame)
+        row = crosses.iloc[0]
+        at = frame[frame["date"] == row["date"]]["close"].iloc[0]
+        assert row["close"] == at, "marker must sit on the close, not on an average"
+
+    def test_the_chart_accepts_and_layers_the_markers(self):
+        import pandas as pd
+        closes = [200 - i * 0.5 for i in range(220)] + [90 + i * 8 for i in range(80)]
+        frame = self._frame(closes)
+        chart = charts.price_history(frame, "light", crosses=queries.sma_crosses(frame))
+        spec = chart.to_dict()
+        assert "layer" in spec, "markers must be layered onto the price chart"
+
+    def test_without_markers_the_chart_is_unchanged(self):
+        import pandas as pd
+        frame = self._frame([100.0 + i for i in range(260)])
+        empty = queries.sma_crosses(self._frame([100.0] * 300))
+        with_none = charts.price_history(frame, "light")
+        with_empty = charts.price_history(frame, "light", crosses=empty)
+        assert with_none.to_dict() == with_empty.to_dict()
+
+
+class TestNewsFrame:
+    """The news was captured at every ingest and scored by the sentiment
+    module — and shown to nobody. This is the read side."""
+
+    def test_stored_headlines_come_back_newest_first(self, conn):
+        from sentinel.domain.models import NewsItem
+        now = dt.datetime.now(dt.UTC)
+        repo.save_news(conn, [
+            NewsItem(ticker="NVDA.US", published_at=now - dt.timedelta(days=2),
+                     headline="Older", source="Reuters", url="https://x.test/1"),
+            NewsItem(ticker="NVDA.US", published_at=now - dt.timedelta(days=1),
+                     headline="Newer", source="FT", url="https://x.test/2"),
+        ])
+        frame = queries.news_frame(conn, "NVDA.US")
+        assert frame["headline"].tolist() == ["Newer", "Older"]
+        assert set(frame.columns) == {"published", "headline", "source", "url"}
+
+    def test_stale_news_is_outside_the_window(self, conn):
+        from sentinel.domain.models import NewsItem
+        repo.save_news(conn, [NewsItem(
+            ticker="NVDA.US",
+            published_at=dt.datetime.now(dt.UTC) - dt.timedelta(days=40),
+            headline="Ancient", source="", url="")])
+        assert queries.news_frame(conn, "NVDA.US", days=14).empty
+
+    def test_another_tickers_news_does_not_bleed_in(self, conn):
+        from sentinel.domain.models import NewsItem
+        repo.save_news(conn, [NewsItem(
+            ticker="AMD.US", published_at=dt.datetime.now(dt.UTC),
+            headline="About AMD", source="", url="")])
+        assert queries.news_frame(conn, "NVDA.US").empty

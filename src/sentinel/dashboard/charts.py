@@ -503,7 +503,8 @@ def sparkline(frame: pd.DataFrame, mode: str, *, y: str = "nav", height: int = 4
     )
 
 def price_history(
-    frame: pd.DataFrame, mode: str, *, height: int = DEFAULT_HEIGHT
+    frame: pd.DataFrame, mode: str, *, height: int = DEFAULT_HEIGHT,
+    crosses: pd.DataFrame | None = None,
 ) -> alt.LayerChart | alt.Chart:
     """Adjusted close with its 50 and 200-day moving averages.
 
@@ -541,5 +542,40 @@ def price_history(
                      alt.Tooltip("value:Q", title="Value", format=",.2f")],
         )
     )
-    return lines.properties(height=height, width="container")
+    chart = lines
+    if crosses is not None and not crosses.empty:
+        # Trend events, not advice: a triangle where the 50-day crossed the
+        # 200-day, coloured by the status palette because a cross is a state
+        # change, not a fourth series. The 2px surface ring keeps the marker
+        # legible on top of the line it sits on.
+        markers = (
+            alt.Chart(crosses)
+            .mark_point(size=170, filled=True, stroke=p.surface, strokeWidth=2)
+            .encode(
+                x="date:T",
+                y=alt.Y("close:Q", scale=alt.Scale(zero=False, nice=True)),
+                shape=alt.Shape(
+                    "kind:N",
+                    scale=alt.Scale(domain=["golden", "death"],
+                                    range=["triangle-up", "triangle-down"]),
+                    legend=None,
+                ),
+                color=alt.Color(
+                    "kind:N",
+                    scale=alt.Scale(domain=["golden", "death"],
+                                    range=[p.status["good"], p.status["critical"]]),
+                    legend=None,
+                ),
+                tooltip=[alt.Tooltip("date:T", title="Date"),
+                         alt.Tooltip("label:N", title=""),
+                         alt.Tooltip("close:Q", title="Close", format=",.2f")],
+            )
+        )
+        # Layered charts SHARE color/shape scales by default, which would
+        # merge golden/death into the line legend and repaint the triangles
+        # with series colours. The markers are a different encoding, not two
+        # more series, so their scales must stay their own.
+        chart = (lines + markers).resolve_scale(color="independent",
+                                                shape="independent")
+    return chart.properties(height=height, width="container")
 

@@ -212,7 +212,15 @@ Recorded so the gaps are known rather than discovered.
   (including the repair turn and the no-`temperature` behaviour), but there is no
   `ANTHROPIC_API_KEY` in this environment.
 - **The dashboard is read-only and has no filters that persist.** Each page filters its own
-  view in-session; nothing is saved.
+  view in-session; nothing is saved. This is a decision, not a gap: writes (recording positions,
+  triggering ingest) stay in the CLI, where they are typed deliberately and audited — a button
+  that mutates the book on a page that can be left open in a tab is how a double-click becomes a
+  phantom position. Real holdings are recorded with `sentinel paper buy` / `paper sell`
+  (never an order anywhere — Sentinel has no broker connection; a limit breach WARNS but records,
+  because the book must match the broker especially when the broker's book breaks the rules).
+  The Search page plots golden/death crosses on the price chart (deterministic trend events, not
+  advice — the verdict banner stays the system's opinion) and shows the stored news headlines the
+  sentiment module scored, which were previously captured and shown to nobody.
 - **Alpaca paper API.** The internal simulated ledger covers both UK and US names; the Alpaca
   integration the spec mentions for US names is not wired.
 - **Reddit / StockTwits sentiment.** The sentiment module accepts arbitrary text via `extra_texts`,

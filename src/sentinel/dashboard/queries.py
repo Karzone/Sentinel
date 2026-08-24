@@ -617,6 +617,52 @@ def price_frame(conn: sqlite3.Connection, ticker: str, *, days: int = 365) -> pd
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["date", "close", "volume"])
 
 
+def news_frame(conn: sqlite3.Connection, ticker: str, *, days: int = 14,
+               limit: int = 25) -> pd.DataFrame:
+    """Recent headlines for one ticker, newest first.
+
+    The news is already in the database — Finnhub writes it at every ingest and
+    the sentiment module scores it — but nothing ever showed it to the person,
+    so "where is the news captured?" was a fair question with a bad answer:
+    captured, scored, and invisible.
+    """
+    since = dt.datetime.now(dt.UTC) - dt.timedelta(days=days)
+    items = repo.get_news(conn, ticker, since=since, limit=limit)
+    rows = [
+        {"published": i.published_at.date(), "headline": i.headline,
+         "source": i.source or "—", "url": i.url or ""}
+        for i in items
+    ]
+    return pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=["published", "headline", "source", "url"])
+
+
+def sma_crosses(frame: pd.DataFrame) -> pd.DataFrame:
+    """Golden/death crosses of the 50-day SMA over the 200-day.
+
+    This is the honest version of "show me when to buy on the chart": a
+    deterministic, widely used trend event, plotted where it happened — not a
+    prediction. The verdict banner above the chart stays the system's actual
+    opinion; these markers only say what the two averages did.
+    """
+    if frame.empty or len(frame) < 200:
+        return pd.DataFrame(columns=["date", "close", "kind", "label"])
+    data = frame.copy()
+    sma50 = data["close"].rolling(50).mean()
+    sma200 = data["close"].rolling(200).mean()
+    above = sma50 > sma200
+    flips = above.ne(above.shift()) & above.shift().notna() & sma200.notna()
+    rows = [
+        {"date": data["date"].iloc[i], "close": data["close"].iloc[i],
+         "kind": "golden" if above.iloc[i] else "death",
+         "label": "Golden cross · SMA50 above SMA200" if above.iloc[i]
+                  else "Death cross · SMA50 below SMA200"}
+        for i in [j for j, f in enumerate(flips) if f]
+    ]
+    return pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=["date", "close", "kind", "label"])
+
+
 def ticker_stats(conn: sqlite3.Connection, ticker: str) -> dict[str, Any]:
     """Deterministic statistics, computed by the same indicators the technical
     module scores with — not a second implementation."""
