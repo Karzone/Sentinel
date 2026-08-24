@@ -1425,3 +1425,87 @@ class TestChartCarriesTheStockName:
     def test_no_title_stays_untitled(self):
         frame = TestCandlestick()._frame(days=20)
         assert "title" not in charts.candlestick(frame, "light").to_dict()
+
+
+class TestJobStartRerunsIntoTheLivePanel:
+    """"can we have auto refresh as soon as clicking on live data fetch?"
+
+    The click that starts a job lands on a page that already drew its buttons
+    (jobs.running() was checked before the click), so a start that does not
+    rerun leaves the user staring at a static message until they reload by
+    hand. _start_job must rerun into _running_job_panel, carrying its
+    "started" message across in session_state.
+    """
+
+    class _St:
+        def __init__(self) -> None:
+            self.session_state: dict = {}
+            self.reran = False
+            self.successes: list[str] = []
+            self.errors: list[str] = []
+            self.infos: list[str] = []
+
+        def rerun(self) -> None:
+            self.reran = True
+
+        def success(self, body, **_kw) -> None:
+            self.successes.append(str(body))
+
+        def error(self, body, **_kw) -> None:
+            self.errors.append(str(body))
+
+        def info(self, body, **_kw) -> None:
+            self.infos.append(str(body))
+
+        def caption(self, *_a, **_kw) -> None:
+            pass
+
+        def progress(self, *_a, **_kw) -> None:
+            pass
+
+        def button(self, *_a, **_kw) -> bool:
+            return False
+
+    def _ctx(self, tmp_path) -> views.Context:
+        return views.Context(conn=None, config=None, mode="light",
+                             db_path=tmp_path / "db.sqlite", writable=True)
+
+    def test_a_successful_start_reruns_with_the_note_stashed(self, tmp_path, monkeypatch):
+        from sentinel.dashboard import jobs
+
+        class _Job:
+            name = "ingest"
+            pid = 4242
+
+        monkeypatch.setattr(jobs, "start", lambda *_a, **_kw: _Job())
+        st = self._St()
+        views._start_job(st, self._ctx(tmp_path), "ingest", [], note="then wait.")
+        assert st.reran, "the page never reran — the panel only appears on reload"
+        note = st.session_state.get("sx-job-note", "")
+        assert "Started `ingest`" in note and "then wait." in note
+
+    def test_a_refused_start_stays_put_with_the_error(self, tmp_path, monkeypatch):
+        from sentinel.dashboard import jobs
+
+        def refuse(*_a, **_kw):
+            raise jobs.JobRefused("one at a time")
+
+        monkeypatch.setattr(jobs, "start", refuse)
+        st = self._St()
+        views._start_job(st, self._ctx(tmp_path), "ingest", [])
+        assert not st.reran
+        assert st.errors and "one at a time" in st.errors[0]
+        assert "sx-job-note" not in st.session_state
+
+    def test_the_panel_shows_the_note_exactly_once(self, tmp_path, monkeypatch):
+        from sentinel.dashboard import jobs
+
+        monkeypatch.setattr(jobs, "running", lambda *_a, **_kw: None)
+        st = self._St()
+        st.session_state["sx-job-note"] = "Started `ingest` (pid 4242)."
+        views._running_job_panel(st, self._ctx(tmp_path), key="t")
+        started = [s for s in st.successes if "Started" in s]
+        assert len(started) == 1
+        views._running_job_panel(st, self._ctx(tmp_path), key="t")
+        assert len([s for s in st.successes if "Started" in s]) == 1, (
+            "the note replayed on a later render instead of being consumed")

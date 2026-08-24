@@ -171,7 +171,8 @@ def today(st, ctx: Context) -> None:
     if ctx.writable:
         st.divider()
         _section(st, "Do it now", "The two buttons that drive everything. "
-                                  "They run in the background; reload to see progress.")
+                                  "They run in the background; progress shows "
+                                  "here and updates by itself.")
         from . import jobs
 
         current = jobs.running(ctx.db_path)
@@ -539,6 +540,10 @@ def _running_job_panel(st, ctx: Context, key: str) -> None:
     """
     from . import jobs
 
+    note = st.session_state.pop("sx-job-note", None)
+    if note:
+        st.success(note, icon="🚀")
+
     def body() -> None:
         current = jobs.running(ctx.db_path)
         if current is None:
@@ -585,17 +590,17 @@ def _offer_fetch(st, ctx: Context, ticker: str) -> None:
     left, right = st.columns(2, gap="medium")
     with left:
         if st.button(f"Fetch {ticker} now", key="fetch-any"):
-            _start_job(st, ctx, "ingest", ["--tickers", ticker, "--history", "800"])
-            st.caption("A single ticker takes well under a minute. Reload, then "
-                       "search it again.")
+            _start_job(st, ctx, "ingest", ["--tickers", ticker, "--history", "800"],
+                       note="A single ticker takes well under a minute — then "
+                            "search it again.")
     with right:
         if st.button(f"Fetch AND score {ticker}", key="fetch-score-any"):
             # brief ingests nothing, so this must be the scoring pass only
             # after data exists — chain by running brief on next reload is
             # more machinery than it is worth; score after the fetch lands.
-            _start_job(st, ctx, "ingest", ["--tickers", ticker, "--history", "800"])
-            st.caption("When the fetch finishes, come back and press "
-                       "“Score this ticker”.")
+            _start_job(st, ctx, "ingest", ["--tickers", ticker, "--history", "800"],
+                       note="When the fetch finishes, come back and press "
+                            "“Score this ticker”.")
 
 
 def reports(st, ctx: Context) -> None:
@@ -924,16 +929,29 @@ def _run_jobs_panel(st, ctx: Context) -> None:
                 st.code(log_tail)
 
 
-def _start_job(st, ctx: Context, name: str, extra: list[str]) -> None:
+def _start_job(st, ctx: Context, name: str, extra: list[str],
+               note: str | None = None) -> None:
+    """Start a background job and rerun the page into the live panel.
+
+    The rerun is the point: the click that starts a job lands on a page that
+    already decided to draw buttons (jobs.running() was checked before the
+    click), so without it the user stares at a static "started" message and
+    has to reload by hand before any progress appears. Rerunning immediately
+    re-renders straight into _running_job_panel, which then refreshes itself.
+    The started message rides session_state across the rerun.
+    """
     from . import jobs
 
     try:
         job = jobs.start(name, db_path=ctx.db_path, extra_args=extra)
     except jobs.JobRefused as exc:
         st.error(str(exc), icon="⛔")
-    else:
-        st.success(f"Started `{job.name}` (pid {job.pid}). It keeps running if "
-                   f"you close this page; reload to see progress.", icon="🚀")
+        return
+    st.session_state["sx-job-note"] = (
+        f"Started `{job.name}` (pid {job.pid}). It keeps running even if you "
+        f"close this page." + (f" {note}" if note else "")
+    )
+    st.rerun()
 
 
 def data_health(st, ctx: Context) -> None:
@@ -1073,6 +1091,13 @@ def _offer_name_lookup(st, ctx: Context, text: str) -> None:
     st.markdown(f'<p class="sx-note">Listings matching “{text}” — pick one to '
                 f'fetch its prices, fundamentals and news.</p>',
                 unsafe_allow_html=True)
+    from . import jobs
+
+    busy = ctx.writable and jobs.running(ctx.db_path) is not None
+    if busy:
+        # A Fetch click reruns straight back here, so the progress panel has
+        # to live on this path too — the buttons return when the job is done.
+        _running_job_panel(st, ctx, key="lookup-job")
     for match in matches:
         row = st.columns([4, 1], gap="small")
         row[0].markdown(
@@ -1080,19 +1105,16 @@ def _offer_name_lookup(st, ctx: Context, text: str) -> None:
             f"<span style='opacity:.6'>{match.ticker} · {match.exchange}"
             + (f" · {match.currency}" if match.currency else "") + "</span>",
             unsafe_allow_html=True)
-        if not ctx.writable:
+        if not ctx.writable or busy:
             continue
         if row[1].button("Fetch", key=f"lookup-{match.ticker}"):
-            from . import jobs
-
             if jobs.running(ctx.db_path) is None:
                 _start_job(st, ctx, "ingest",
-                           ["--tickers", match.ticker, "--history", "800"])
-                st.caption("A single ticker takes well under a minute. Reload, "
-                           "then search it again — by name or ticker.")
+                           ["--tickers", match.ticker, "--history", "800"],
+                           note="A single ticker takes well under a minute — "
+                                "then search it again, by name or ticker.")
             else:
-                st.caption("Another job is already running; one at a time. "
-                           "Reload to check on it.")
+                st.caption("Another job is already running; one at a time.")
     if not ctx.writable:
         st.caption("Fetch one with `sentinel ingest --tickers <SYMBOL>` and reload.")
 
@@ -1239,7 +1261,10 @@ def _ticker_detail(st, ctx: Context, ticker: str) -> None:
         if jobs.running(ctx.db_path) is None:
             if st.button(f"Score {ticker} now (runs the pipeline + LLM on this one ticker)",
                          key="score-any"):
-                _start_job(st, ctx, "brief", ["--tickers", ticker])
+                _start_job(st, ctx, "brief", ["--tickers", ticker],
+                           note="Scoring one ticker takes a couple of minutes.")
+        else:
+            _running_job_panel(st, ctx, key="score-job")
 
     if verdict.blockers:
         _section(st, "Why it is not a buy", "Every layer that refused it, and what it said.")

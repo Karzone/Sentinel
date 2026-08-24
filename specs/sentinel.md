@@ -243,7 +243,13 @@ Recorded so the gaps are known rather than discovered.
   (`_running_job_panel`): both ingest and the brief log one `[n/m]` line per ticker,
   `jobs.progress` parses the last marker plus the last log line out of the job log, and the
   panel draws them as a progress bar that refreshes itself every few seconds via `st.fragment`
-  (a Refresh button on Streamlit without fragments).
+  (a Refresh button on Streamlit without fragments). Starting a job lands in that panel
+  IMMEDIATELY: `_start_job` stashes its "started" message in session state and calls
+  `st.rerun()`, because the click that starts a job arrives on a page that already drew its
+  buttons — without the rerun the user stares at a static message and has to reload by hand
+  before any progress appears. Every path that can start a job (Today's two buttons, Search's
+  fetch offers and name-lookup Fetch rows, the detail page's "Score now", Data health's run
+  panel) renders the panel when a job is running, so the rerun always has a panel to land in.
   The Search page plots golden/death crosses on the price chart (deterministic trend events, not
   advice — the verdict banner stays the system's opinion) and shows the stored news headlines the
   sentiment module scored, which were previously captured and shown to nobody. The stock detail's
