@@ -105,3 +105,57 @@ class TestTheSurface:
             time.sleep(0.05)
         assert "hello from the job" in jobs.tail(db)
         assert "=== ingest started" in jobs.tail(db)
+
+
+class TestWindowsLiveness:
+    """os.kill(pid, 0) is not a probe on Windows — there is no signal 0, and
+    CPython implements other signals as TerminateProcess. Live failure:
+    WinError 11 out of jobs.running() took the whole Search page down. The
+    kernel32 OpenProcess/GetExitCodeProcess pair is the probe Windows has."""
+
+    class _K32:
+        def __init__(self, *, handle=1, exit_code=259, get_ok=True):
+            self._handle, self._code, self._ok = handle, exit_code, get_ok
+            self.closed = []
+
+        def OpenProcess(self, access, inherit, pid):
+            return self._handle
+
+        def GetExitCodeProcess(self, handle, out):
+            out._obj.value = self._code
+            return 1 if self._ok else 0
+
+        def CloseHandle(self, handle):
+            self.closed.append(handle)
+            return 1
+
+    def test_a_running_process_reports_alive(self):
+        k32 = self._K32(exit_code=259)
+        assert jobs._pid_alive_windows(1234, k32=k32) is True
+        assert k32.closed, "the process handle leaked"
+
+    def test_an_exited_process_reports_dead(self):
+        assert jobs._pid_alive_windows(1234, k32=self._K32(exit_code=0)) is False
+
+    def test_no_such_process_reports_dead_without_touching_handles(self):
+        k32 = self._K32(handle=0)
+        assert jobs._pid_alive_windows(1234, k32=k32) is False
+        assert k32.closed == [], "closed a handle that was never opened"
+
+    def test_a_failed_exit_code_query_reports_dead(self):
+        """Dead beats wedged: a stale lock that self-clears is recoverable, a
+        lock nobody can clear is not."""
+        assert jobs._pid_alive_windows(1234, k32=self._K32(get_ok=False)) is False
+
+    def test_the_dispatch_never_reaches_os_kill_on_windows(self, monkeypatch, db):
+        """The exact crash: a lock from a previous process, probed on nt."""
+        import json
+        jobs.lock_path(db).write_text(json.dumps(
+            {"name": "ingest", "pid": 4242, "started_at": "x", "log_path": ""}))
+        monkeypatch.setattr(jobs.os, "name", "nt")
+        monkeypatch.setattr(jobs, "_pid_alive_windows", lambda pid: False)
+
+        def boom(*a):  # os.kill must not be consulted at all on Windows
+            raise AssertionError("os.kill probed on Windows")
+        monkeypatch.setattr(jobs.os, "kill", boom)
+        assert jobs.running(db) is None

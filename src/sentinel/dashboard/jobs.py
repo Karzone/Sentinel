@@ -72,6 +72,8 @@ def _pid_alive(pid: int) -> bool:
             return True
         _handles.pop(pid, None)
         return False
+    if os.name == "nt":
+        return _pid_alive_windows(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -79,6 +81,42 @@ def _pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+#: GetExitCodeProcess reports this while the process is still running.
+_STILL_ACTIVE = 259
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+
+def _pid_alive_windows(pid: int, *, k32=None) -> bool:
+    """Liveness via OpenProcess/GetExitCodeProcess.
+
+    `os.kill(pid, 0)` is NOT a probe on Windows: there is no signal 0 there,
+    and CPython implements other signal numbers as TerminateProcess — so the
+    POSIX idiom either raises (WinError 11 took the whole Search page down,
+    live) or, worse, silently KILLS the process it was asked about. The
+    kernel32 pair below is the probe Windows actually has.
+
+    `k32` is injectable because the real one only exists on Windows and this
+    logic must be testable from anywhere.
+    """
+    import ctypes
+
+    if k32 is None:  # pragma: no cover - the injected fake covers the logic
+        k32 = ctypes.windll.kernel32
+    handle = k32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        # No such process - or access denied, which means it EXISTS but is
+        # someone else's. Jobs here are always our user's, so absent wins;
+        # a wedged lock beaten by reboot is better than two ingests racing.
+        return False
+    try:
+        code = ctypes.c_ulong()
+        if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return code.value == _STILL_ACTIVE
+    finally:
+        k32.CloseHandle(handle)
 
 
 def lock_path(db_path: str | Path) -> Path:
