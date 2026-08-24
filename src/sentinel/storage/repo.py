@@ -290,6 +290,11 @@ def _row_to_position(r: sqlite3.Row) -> Position:
     )
 
 
+def get_position(conn: sqlite3.Connection, position_id_: str) -> Position | None:
+    row = conn.execute("SELECT * FROM positions WHERE id = ?", (position_id_,)).fetchone()
+    return _row_to_position(row) if row else None
+
+
 def get_open_positions(conn: sqlite3.Connection) -> list[Position]:
     rows = conn.execute(
         "SELECT * FROM positions WHERE status = ? ORDER BY opened_on", (PositionStatus.OPEN.value,)

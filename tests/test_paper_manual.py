@@ -127,3 +127,65 @@ class TestSellClosesWhatBuyOpened:
         conn = _open(env)
         events = [e for e in audit.read(conn) if e["event"] == audit.AuditEvent.POSITION_CLOSED]
         assert events and events[-1]["payload"]["manual"] is True
+
+
+class TestTheSharedRecorder:
+    """`portfolio.manual` — one implementation under both the CLI and the
+    dashboard form, so the rules cannot drift apart."""
+
+    def _conn(self, tmp_path):
+        path = tmp_path / "m.sqlite"
+        c = db.connect(str(path))
+        db.migrate(c)
+        return c
+
+    def _config(self):
+        from sentinel.config import Config
+        return Config()
+
+    def test_the_same_fill_twice_is_refused_and_cash_moves_once(self, tmp_path):
+        """The double-submit case the web form makes likely: the position row
+        upserts idempotently, but the cash deduction would not — so the second
+        identical submission must be refused outright."""
+        from sentinel.portfolio import manual
+
+        conn, config = self._conn(tmp_path), self._config()
+        kwargs = dict(ticker="ABC.LSE", shares=100, price=Decimal("5"),
+                      opened_on=dt.date(2026, 8, 20))
+        manual.record_buy(conn, config, **kwargs)
+        with pytest.raises(manual.ManualEntryError, match="already recorded"):
+            manual.record_buy(conn, config, **kwargs)
+
+        _, nav, cash, _ = repo.get_equity_curve(conn)[-1]
+        assert nav - cash == Decimal("500"), "cash was deducted twice"
+        assert len(repo.get_all_positions(conn)) == 1
+
+    def test_a_second_lot_on_another_date_is_a_new_position(self, tmp_path):
+        from sentinel.portfolio import manual
+
+        conn, config = self._conn(tmp_path), self._config()
+        manual.record_buy(conn, config, ticker="ABC.LSE", shares=10,
+                          price=Decimal("5"), opened_on=dt.date(2026, 8, 20))
+        manual.record_buy(conn, config, ticker="ABC.LSE", shares=10,
+                          price=Decimal("6"), opened_on=dt.date(2026, 8, 21))
+        assert len(repo.get_open_positions(conn)) == 2
+
+    def test_the_dashboard_gate_needs_local_and_real_together(self):
+        from sentinel.portfolio import manual
+
+        assert manual.allowed_in(dashboard_local=True, demo=False) is True
+        # Hosted deploy: never local, whatever the database claims.
+        assert manual.allowed_in(dashboard_local=False, demo=False) is False
+        # A demo database stays fabricated end to end: one real fill written
+        # into invented history would be the one real-looking number on a page
+        # that promises there are none.
+        assert manual.allowed_in(dashboard_local=True, demo=True) is False
+        assert manual.allowed_in(dashboard_local=False, demo=True) is False
+
+    def test_the_context_defaults_to_not_writable(self):
+        """A view can only render the form if app.py decided so explicitly —
+        a Context built anywhere else (tests, future pages) stays read-only."""
+        from sentinel.dashboard.views import Context
+
+        ctx = Context(conn=None, config=self._config(), mode="light")
+        assert ctx.writable is False

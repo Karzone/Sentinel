@@ -30,6 +30,14 @@ class Context:
     conn: Any
     config: Config
     mode: str
+    #: Path to the database, for the one seam that may write (Record a trade).
+    #: The page's own `conn` stays read-only; writes open their own connection
+    #: for exactly one recording and close it, so no page can drift into
+    #: writing through the handle it renders from.
+    db_path: Any = None
+    #: True only for a local session on a non-demo database — the same policy
+    #: as `portfolio.manual.allowed_in`, decided once in app.py.
+    writable: bool = False
 
 
 def _chart(st, chart, *, key: str | None = None) -> None:
@@ -131,13 +139,19 @@ def portfolio(st, ctx: Context) -> None:
                     "entry": st.column_config.NumberColumn("Entry", format="%.2f"),
                     "mark": st.column_config.NumberColumn("Mark", format="%.2f"),
                     "stop": st.column_config.NumberColumn("Stop", format="%.2f"),
-                    "move": st.column_config.NumberColumn("Move", format="%+.1f%%"),
+                    # move is a FRACTION (-0.274), so the percent format needs
+                    # ProgressColumn-style scaling; "%+.1f%%" printed the raw
+                    # fraction with a % sign and -27.4% displayed as -0.3%.
+                    "move": st.column_config.NumberColumn(
+                        "Move", format="percent"),
                     "to_stop": st.column_config.ProgressColumn(
                         "To stop", format="%.1f%%", min_value=0.0, max_value=0.5,
                     ),
                     "value_gbp": st.column_config.NumberColumn("Value (£)", format="%.2f"),
                 },
             )
+
+        _record_trade_forms(st, ctx)
 
     with right:
         _section(st, "Sector allocation", "Every sector against the same cap.")
@@ -161,6 +175,99 @@ def portfolio(st, ctx: Context) -> None:
 
 
 # ---------------------------------------------------------------- 2. risk
+
+
+def _record_trade_forms(st, ctx: Context) -> None:
+    """Record a fill that already happened at the broker — the write seam.
+
+    Rendered only for a local session on a real database (`ctx.writable`,
+    decided once in app.py by `portfolio.manual.allowed_in`). The page's own
+    connection stays read-only; each recording opens its own write connection
+    for that one transaction. All rules live in `portfolio.manual`, shared
+    with `sentinel paper buy/sell` — this function is only a form.
+    """
+    if not ctx.writable:
+        return
+
+    import sqlite3
+
+    from ..domain.enums import IdeaClass
+    from ..money import dec
+    from ..portfolio import manual
+
+    def _write(fn, **kwargs):
+        conn = sqlite3.connect(str(ctx.db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            return fn(conn, ctx.config, **kwargs)
+        finally:
+            conn.close()
+
+    with st.expander("Record a trade — a fill that already happened at your broker"):
+        st.markdown(
+            '<p class="sx-note">This writes your book, it places no order — Sentinel '
+            'has no broker connection. A risk limit the position breaks is warned '
+            'about and recorded anyway; the same fill twice is refused.</p>',
+            unsafe_allow_html=True,
+        )
+        buy_tab, sell_tab = st.tabs(["Bought", "Sold"])
+
+        with buy_tab, st.form("record-buy", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            ticker = c1.text_input("Ticker", placeholder="NVDA.US")
+            shares = c2.number_input("Shares", min_value=1, step=1, value=1)
+            price = c3.text_input("Fill price", placeholder="178.50",
+                                  help="In the instrument's own currency.")
+            c4, c5, c6 = st.columns(3)
+            opened = c4.date_input("Fill date", value="today", format="YYYY-MM-DD")
+            stop = c5.text_input("Stop (optional)", placeholder="150")
+            klass = c6.selectbox("Class", ["long_term", "swing"])
+            note = st.text_input("Why you hold it / what would make you sell (optional)")
+            if st.form_submit_button("Record buy"):
+                try:
+                    result = _write(
+                        manual.record_buy, ticker=ticker, shares=int(shares),
+                        price=dec(price), opened_on=opened,
+                        stop=dec(stop) if stop.strip() else None,
+                        idea_class=IdeaClass(klass), note=note,
+                    )
+                except (manual.ManualEntryError, ArithmeticError, ValueError) as exc:
+                    st.error(str(exc) or "that price could not be parsed", icon="⛔")
+                else:
+                    for warning in result.warnings:
+                        st.warning(warning, icon="⚠️")
+                    st.success(
+                        f"Recorded {result.position.shares} × {result.position.ticker} "
+                        f"@ {result.position.entry} {result.position.currency} "
+                        f"(£{result.gbp_amount:,.2f}) · cash £{result.cash:,.2f}. "
+                        f"Reload the page to see it in the tables.",
+                        icon="✅",
+                    )
+
+        with sell_tab:
+            open_tickers = queries.positions_frame(ctx.conn)
+            names = open_tickers["ticker"].tolist() if not open_tickers.empty else []
+            if not names:
+                st.caption("No open positions to close.")
+            else:
+                with st.form("record-sell", clear_on_submit=True):
+                    s1, s2, s3 = st.columns(3)
+                    sold = s1.selectbox("Position", names)
+                    exit_price = s2.text_input("Exit price")
+                    closed = s3.date_input("Exit date", value="today", format="YYYY-MM-DD")
+                    if st.form_submit_button("Record sell"):
+                        try:
+                            result = _write(manual.record_sell, ticker=sold,
+                                            price=dec(exit_price), closed_on=closed)
+                        except (manual.ManualEntryError, ArithmeticError, ValueError) as exc:
+                            st.error(str(exc) or "that price could not be parsed", icon="⛔")
+                        else:
+                            st.success(
+                                f"Closed {result.position.shares} × {result.position.ticker} "
+                                f"@ {result.position.exit_price} · P&L £{result.pnl:,.2f} · "
+                                f"cash £{result.cash:,.2f}. Reload to refresh the tables.",
+                                icon="✅",
+                            )
 
 
 def risk(st, ctx: Context) -> None:

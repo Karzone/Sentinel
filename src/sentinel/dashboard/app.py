@@ -66,9 +66,16 @@ def main() -> None:
         st.stop()
         return
 
-    ctx = views.Context(conn=conn, config=config, mode=mode)
-
     from . import queries
+    from ..portfolio import manual
+
+    ctx = views.Context(
+        conn=conn, config=config, mode=mode, db_path=db_path,
+        writable=manual.allowed_in(
+            dashboard_local=auth.is_local_session(),
+            demo=queries.is_demo_database(conn),
+        ),
+    )
 
     if queries.is_demo_database(conn):
         st.warning(

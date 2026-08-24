@@ -211,13 +211,19 @@ Recorded so the gaps are known rather than discovered.
 - **No live LLM call has been made.** The client is exercised end to end against a stub SDK
   (including the repair turn and the no-`temperature` behaviour), but there is no
   `ANTHROPIC_API_KEY` in this environment.
-- **The dashboard is read-only and has no filters that persist.** Each page filters its own
-  view in-session; nothing is saved. This is a decision, not a gap: writes (recording positions,
-  triggering ingest) stay in the CLI, where they are typed deliberately and audited — a button
-  that mutates the book on a page that can be left open in a tab is how a double-click becomes a
-  phantom position. Real holdings are recorded with `sentinel paper buy` / `paper sell`
-  (never an order anywhere — Sentinel has no broker connection; a limit breach WARNS but records,
-  because the book must match the broker especially when the broker's book breaks the rules).
+- **The dashboard is read-only, with ONE deliberate write seam (2026-08-24 owner decision):
+  Record a trade.** The owner asked for position entry on the web page, which supersedes the
+  earlier CLI-only stance. The rules live in `portfolio.manual` — one implementation under both
+  `sentinel paper buy`/`sell` and the Portfolio page's form, so they cannot drift: never an order
+  anywhere (no broker connection); a risk-limit breach WARNS but records, because the book must
+  match the broker especially when the broker's book breaks the rules; input that can only be a
+  mistake is refused (a long's stop at/above entry, and the SAME fill twice — the duplicate guard
+  is what makes a double-submitted web form deduct cash once). The form renders only when
+  `manual.allowed_in` says so: a LOCAL session (`SENTINEL_DASHBOARD_LOCAL`, which the hosted
+  deploy pops) on a NON-demo database (a real fill inside fabricated history would be the one
+  real-looking number on a page that promises there are none). The page's own connection stays
+  read-only; each recording opens its own write connection for one transaction. Triggering
+  *ingest* from the page remains out — that stays CLI/scheduled.
   The Search page plots golden/death crosses on the price chart (deterministic trend events, not
   advice — the verdict banner stays the system's opinion) and shows the stored news headlines the
   sentiment module scored, which were previously captured and shown to nobody.
