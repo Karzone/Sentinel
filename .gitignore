@@ -17,3 +17,5 @@ htmlcov/
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm
+sentinel.toml
+.env.example
