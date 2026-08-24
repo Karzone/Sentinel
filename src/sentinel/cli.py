@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import time
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -905,6 +906,100 @@ def dashboard(
          "--server.headless", "true", "--browser.gatherUsageStats", "false"],
         env=env, check=False,
     )
+
+
+@app.command()
+def phone(
+    port: int = typer.Option(8501, "--port"),
+    theme: str = typer.Option("light", "--theme", help="light | dark"),
+    config_path: Optional[str] = typer.Option(None, "--config"),
+) -> None:
+    """The dashboard on your phone: dashboard + Cloudflare tunnel, one command.
+
+    Starts the dashboard on loopback in --tunnel mode (password mandatory),
+    waits until it actually answers, then opens a cloudflared quick tunnel and
+    prints the https://…trycloudflare.com URL to open on the phone. Ctrl+C
+    stops both; either one dying stops the other — a tunnel must never outlive
+    its origin, and an origin must never keep serving invisibly.
+    """
+    from . import phone as ph
+    from .dashboard import auth as dash_auth
+
+    config = _config(config_path)
+    if not Path(config.paths.db).exists():
+        console.print("[red]no database yet — run `sentinel init` and `sentinel ingest` first[/]")
+        raise typer.Exit(EXIT_FAILURE)
+
+    password = os.environ.get(dash_auth.PASSWORD_ENV) or typer.prompt(
+        "Choose a dashboard password (this is the only gate on the public URL)",
+        hide_input=True,
+    )
+    problem = ph.password_problem(password)
+    if problem:
+        console.print(f"[red]{problem}[/]")
+        raise typer.Exit(EXIT_FAILURE)
+
+    binary = ph.find_cloudflared()
+    if binary is None:
+        console.print(ph.INSTALL_HINTS)
+        raise typer.Exit(EXIT_FAILURE)
+
+    log_dir = Path(config.paths.db).parent
+    dash_log_path = log_dir / "phone-dashboard.log"
+    tun_log_path = log_dir / "phone-tunnel.log"
+    env = {**os.environ, dash_auth.PASSWORD_ENV: password}
+
+    console.print(f"[green]starting[/] the dashboard on loopback :{port} …")
+    with open(dash_log_path, "ab") as dash_log:
+        dashboard_proc = ph.spawn(ph.dashboard_argv(port, theme), log_file=dash_log, env=env)
+    if not ph.wait_for_origin(port, is_dead=lambda: dashboard_proc.poll() is not None):
+        ph.stop(dashboard_proc)
+        console.print(f"[red]the dashboard never became healthy — see {dash_log_path}[/]")
+        raise typer.Exit(EXIT_FAILURE)
+
+    console.print("[green]opening[/] the tunnel …")
+    with open(tun_log_path, "ab") as tun_log:
+        tunnel_proc = ph.spawn(ph.cloudflared_argv(binary, port), log_file=tun_log, env=env)
+
+    url = None
+    deadline = time.monotonic() + 60
+    while url is None and time.monotonic() < deadline:
+        if tunnel_proc.poll() is not None or dashboard_proc.poll() is not None:
+            break
+        url = ph.parse_tunnel_url(tun_log_path.read_text(errors="replace"))
+        if url is None:
+            time.sleep(0.5)
+    if url is None:
+        ph.stop(tunnel_proc)
+        ph.stop(dashboard_proc)
+        console.print(f"[red]no tunnel URL appeared — see {tun_log_path}[/]")
+        raise typer.Exit(EXIT_FAILURE)
+
+    console.print()
+    console.print(f"[bold green]  {url}[/]")
+    console.print()
+    console.print("  Open that on your phone and sign in with the password.")
+    console.print("  Add to Home Screen to launch it like an app.")
+    console.print("  Ctrl+C here stops both the tunnel and the dashboard.")
+    console.print()
+
+    try:
+        while True:
+            verdict = ph.arbitrate(dashboard_proc.poll() is not None,
+                                   tunnel_proc.poll() is not None)
+            if verdict is not None:
+                other = "tunnel" if verdict.failed == "dashboard" else "dashboard"
+                console.print(f"[red]{verdict.failed} exited — stopping the {other}[/]")
+                ph.stop(dashboard_proc)
+                ph.stop(tunnel_proc)
+                raise typer.Exit(EXIT_FAILURE)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        console.print()
+        console.print("stopping …")
+        ph.stop(tunnel_proc)
+        ph.stop(dashboard_proc)
+        console.print("stopped. The URL is dead; a new run gets a new one.")
 
 
 @app.command()

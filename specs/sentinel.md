@@ -129,6 +129,13 @@ mandatory and the launcher refuses without one. `deploy/sentinel-tunnel.sh` chec
 starting either process, since a systemd unit that fails at the second has already opened the
 first. Generalise: an access control that infers safety from a network fact is only as good as the
 fact, and tunnels are built to falsify this one.
+**`sentinel phone` is the cross-platform packaging of the same pair** (the owner's machine is
+Windows, where a .sh is not a phone mode): it prompts for a password if none is set and refuses one
+under 8 characters, starts the dashboard with `--tunnel` on loopback, waits for `/_stcore/health`
+before opening the tunnel (origin before tunnel — the ordering that can never publish a 502), opens
+a cloudflared quick tunnel and prints the `trycloudflare.com` URL, then supervises both: either
+process dying stops the other, and Ctrl+C stops both, via process-group kill (setsid/killpg on
+POSIX, CREATE_NEW_PROCESS_GROUP on Windows) so the streamlit grandchild cannot be left serving.
 
 **"Accepted" means the rules layer AND the risk layer, and it is read from the audit trail.**
 `score_universe` persists an idea BEFORE `assess()` runs, and `assess` returns its verdicts to the
