@@ -239,6 +239,11 @@ Recorded so the gaps are known rather than discovered.
   calls a zombie alive, so a finished ingest would otherwise read as "running" until the
   dashboard restarted. Only names in `jobs.COMMANDS` can run: the page hands over a choice,
   never a command line. Same `ctx.writable` gate as Record-a-trade (local + non-demo).
+  While a job holds the lock, every page that reports it renders a LIVE progress panel
+  (`_running_job_panel`): both ingest and the brief log one `[n/m]` line per ticker,
+  `jobs.progress` parses the last marker plus the last log line out of the job log, and the
+  panel draws them as a progress bar that refreshes itself every few seconds via `st.fragment`
+  (a Refresh button on Streamlit without fragments).
   The Search page plots golden/death crosses on the price chart (deterministic trend events, not
   advice — the verdict banner stays the system's opinion) and shows the stored news headlines the
   sentiment module scored, which were previously captured and shown to nobody. The stock detail's
