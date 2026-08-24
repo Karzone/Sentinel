@@ -190,6 +190,34 @@ Return the corrected JSON object only. Do not explain the correction."""
 # ---------------------------------------------------------------- Anthropic
 
 
+#: JSON Schema keywords the structured-outputs endpoint REJECTS with a 400
+#: ("For 'integer' type, properties maximum, minimum are not supported").
+#: The official SDK helpers handle this by stripping them from the wire schema
+#: and validating client-side; this client already validates the full schema
+#: locally (with a repair turn on violation), so stripping loses nothing —
+#: the bounds are still enforced, just by us instead of by the API.
+_WIRE_UNSUPPORTED = frozenset({
+    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+    "minLength", "maxLength", "pattern",
+    "minItems", "maxItems", "uniqueItems",
+})
+
+
+def wire_schema(schema: Any) -> Any:
+    """A deep copy of `schema` with the keywords the API rejects removed.
+
+    The FULL schema stays the contract: `validate()` runs it against every
+    response, and a bound the API never saw still triggers the repair turn.
+    Only the copy that goes over the wire is relaxed.
+    """
+    if isinstance(schema, dict):
+        return {key: wire_schema(value) for key, value in schema.items()
+                if key not in _WIRE_UNSUPPORTED}
+    if isinstance(schema, list):
+        return [wire_schema(item) for item in schema]
+    return schema
+
+
 class AnthropicClient:
     """The real client. Structured output via ``output_config.format``."""
 
@@ -252,7 +280,8 @@ class AnthropicClient:
             "max_tokens": self.config.max_tokens,
             "system": system,
             "messages": messages,
-            "output_config": {"format": {"type": "json_schema", "schema": schema}},
+            "output_config": {"format": {"type": "json_schema",
+                                          "schema": wire_schema(schema)}},
         }
         if accepts_sampling(model):
             kwargs["temperature"] = self.config.temperature

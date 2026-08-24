@@ -162,7 +162,11 @@ class TestAnthropicClient:
         client, sdk = self._client([json.dumps(GOOD_CATALYST)])
         client.complete_json(module="news", system="s", prompt="p", schema=CATALYST_SCHEMA)
         fmt = sdk.messages.requests[0]["output_config"]["format"]
-        assert fmt["type"] == "json_schema" and fmt["schema"] is CATALYST_SCHEMA
+        # The WIRED schema, not the raw one: the API rejects bound keywords
+        # with a 400, so identity with CATALYST_SCHEMA was the live bug.
+        assert fmt["type"] == "json_schema"
+        assert fmt["schema"] == llm.wire_schema(CATALYST_SCHEMA)
+        assert "minimum" not in str(fmt["schema"])
 
     def test_dormant_without_a_key(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -241,3 +245,99 @@ class TestUnavailabilityIsNamed:
         client = AnthropicClient(self._config())
         monkeypatch.setattr(client, "_import_sdk", lambda: None)
         assert "ANTHROPIC_API_KEY" in client.unavailable_reason()
+
+
+class TestWireSchema:
+    """The structured-outputs API rejects numeric/string/array constraint
+    keywords with a 400 — live case: every schema here carries integer bounds,
+    so the FIRST real LLM call of the project failed on schema, not content.
+    The bounds are not dropped from the contract: the full schema still
+    validates every response locally, with the repair turn behind it."""
+
+    def test_the_rejected_keywords_are_stripped_at_every_depth(self):
+        from sentinel.llm.client import wire_schema
+
+        schema = {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "horizon_days": {"type": "integer", "minimum": 1, "maximum": 1825},
+                "thesis": {"type": "string", "maxLength": 600},
+                "tags": {"type": "array", "minItems": 1, "maxItems": 5,
+                         "items": {"type": "string", "pattern": "^[a-z]+$"}},
+                "nested": {"type": "object", "additionalProperties": False,
+                           "properties": {"p": {"type": "number", "minimum": 0,
+                                                "exclusiveMaximum": 1}}},
+            },
+            "required": ["horizon_days"],
+        }
+        wired = wire_schema(schema)
+        text = str(wired)
+        for keyword in ("minimum", "maximum", "maxLength", "minItems",
+                        "maxItems", "pattern", "exclusiveMaximum"):
+            assert keyword not in text, keyword
+
+    def test_everything_the_api_supports_survives(self):
+        from sentinel.llm.client import wire_schema
+
+        schema = {"type": "object", "additionalProperties": False,
+                  "properties": {"kind": {"type": "string", "enum": ["a", "b"],
+                                          "description": "which"}},
+                  "required": ["kind"]}
+        assert wire_schema(schema) == schema
+
+    def test_the_original_schema_is_not_mutated(self):
+        """The full schema is still the local validation contract — stripping
+        in place would silently weaken the repair loop too."""
+        from sentinel.llm.client import wire_schema
+
+        schema = {"type": "integer", "minimum": 1}
+        wire_schema(schema)
+        assert schema == {"type": "integer", "minimum": 1}
+
+    def test_every_shipped_schema_is_wire_clean(self):
+        """Not just the one that failed live: any schema added later with a
+        bound would 400 on its first real call, which is exactly the class of
+        bug that only shows up on the owner's machine."""
+        from sentinel.llm import schemas
+        from sentinel.llm.client import wire_schema
+
+        shipped = {name: value for name, value in vars(schemas).items()
+                   if name.endswith("_SCHEMA") and isinstance(value, dict)}
+        assert shipped, "no schemas found — the discovery convention changed"
+        for name, schema in shipped.items():
+            text = str(wire_schema(schema))
+            for keyword in ("minimum", "maximum", "minLength", "maxLength",
+                            "minItems", "maxItems", "pattern"):
+                assert keyword not in text, f"{name} still carries {keyword}"
+
+    def test_the_request_path_sends_the_wired_schema(self):
+        """Stripping that exists but is not on the request path is the guard
+        that runs second all over again."""
+        from sentinel.config import LlmConfig
+        from sentinel.llm.client import AnthropicClient
+
+        sent = {}
+
+        class _Messages:
+            def create(self, **kwargs):
+                sent.update(kwargs)
+
+                class _Response:
+                    content = [type("B", (), {"type": "text",
+                                              "text": '{"ok": true}'})()]
+                return _Response()
+
+        class _Sdk:
+            messages = _Messages()
+
+        client = AnthropicClient(LlmConfig(), sdk=_Sdk())
+        client.complete_json(
+            module="test", system="s", prompt="p",
+            schema={"type": "object", "additionalProperties": False,
+                    "properties": {"ok": {"type": "boolean"},
+                                   "n": {"type": "integer", "minimum": 1}},
+                    "required": ["ok"]},
+        )
+        wire = str(sent["output_config"])
+        assert "minimum" not in wire
+        assert "json_schema" in wire
