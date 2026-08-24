@@ -312,8 +312,10 @@ def _conviction_detail(st, ctx: Context, item) -> None:
 
     prices = queries.price_frame(ctx.conn, item.ticker)
     _section(st, "Price", "Adjusted close with the 50 and 200-day moving averages.")
-    _chart(st, charts.price_history(prices, ctx.mode,
-                                    crosses=queries.sma_crosses(prices)),
+    conv_name = queries.company_name(ctx.conn, item.ticker)
+    _chart(st, charts.price_history(
+        prices, ctx.mode, crosses=queries.sma_crosses(prices),
+        title=f"{conv_name} ({item.ticker})" if conv_name else item.ticker),
            key=f"conv-price-{item.ticker}")
 
     _section(st, "Module scores", "Shown as a deviation from neutral 50.")
@@ -550,7 +552,7 @@ def _offer_fetch(st, ctx: Context, ticker: str) -> None:
     left, right = st.columns(2, gap="medium")
     with left:
         if st.button(f"Fetch {ticker} now", key="fetch-any"):
-            _start_job(st, ctx, "ingest", ["--tickers", ticker, "--history", "600"])
+            _start_job(st, ctx, "ingest", ["--tickers", ticker, "--history", "800"])
             st.caption("A single ticker takes well under a minute. Reload, then "
                        "search it again.")
     with right:
@@ -558,7 +560,7 @@ def _offer_fetch(st, ctx: Context, ticker: str) -> None:
             # brief ingests nothing, so this must be the scoring pass only
             # after data exists — chain by running brief on next reload is
             # more machinery than it is worth; score after the fetch lands.
-            _start_job(st, ctx, "ingest", ["--tickers", ticker, "--history", "600"])
+            _start_job(st, ctx, "ingest", ["--tickers", ticker, "--history", "800"])
             st.caption("When the fetch finishes, come back and press "
                        "“Score this ticker”.")
 
@@ -975,26 +977,90 @@ def search(st, ctx: Context) -> None:
         unsafe_allow_html=True,
     )
 
-    tickers = queries.searchable_tickers(ctx.conn)
+    options = queries.search_options(ctx.conn)
 
-    # ONE box: typing filters the stocks the app knows (the suggestions), and
-    # accept_new_options lets an unknown symbol through to the fetch offer —
-    # so "type SOFI" works whether or not SOFI has ever been fetched.
+    # ONE box: typing filters the stocks the app knows — the labels carry both
+    # the ticker and the company name, so "nvidia" and "nvda" find the same
+    # row — and accept_new_options lets anything unknown through: a symbol to
+    # the fetch offer, a company name to the vendor's symbol search.
     chosen = st.selectbox(
-        "Type a ticker — e.g. SOFI", tickers, index=None, key="search-ticker",
+        "Type a company name or ticker — e.g. Rocket Lab, SOFI",
+        list(options), index=None, key="search-ticker",
         accept_new_options=True,
-        placeholder="Start typing… suggestions appear; a new symbol fetches it",
+        placeholder="Start typing… known stocks suggest themselves; anything "
+                    "new is looked up",
     )
     if not chosen:
-        st.caption("Pick a suggestion or type any symbol to see its "
+        st.caption("Pick a suggestion or type any name/symbol to see its "
                    "statistics, chart, news and the app's verdict.")
         return
-    ticker = queries.normalize_ticker(chosen)
-    if ticker not in tickers:
-        _offer_fetch(st, ctx, ticker)
+    if chosen in options:
+        _ticker_detail(st, ctx, options[chosen])
         return
 
-    _ticker_detail(st, ctx, ticker)
+    text = chosen.strip()
+    if queries.looks_like_ticker(text):
+        ticker = queries.normalize_ticker(text)
+        if ticker in options.values():
+            _ticker_detail(st, ctx, ticker)
+        else:
+            _offer_fetch(st, ctx, ticker)
+        return
+    _offer_name_lookup(st, ctx, text)
+
+
+#: Query -> matches, remembered for the session. Streamlit reruns the whole
+#: page on every button click, and without this each click on "Fetch" would
+#: re-ask the vendor the question it already answered.
+_LOOKUP_CACHE: dict[str, list] = {}
+
+
+def _offer_name_lookup(st, ctx: Context, text: str) -> None:
+    """A company name, not a ticker: ask the data vendor which symbols match,
+    and offer to fetch one. One request per submitted query, cached for the
+    session — never a call per keystroke against a metered vendor."""
+    from ..data import lookup
+    from ..data.base import ProviderError
+
+    if text not in _LOOKUP_CACHE:
+        try:
+            _LOOKUP_CACHE[text] = lookup.search_symbols(text)
+        except ProviderError as exc:
+            st.info(f"Could not search by name: {exc}", icon="🔌")
+            st.caption("You can still type the ticker directly — e.g. RKLB "
+                       "for Rocket Lab.")
+            return
+    matches = _LOOKUP_CACHE[text]
+    if not matches:
+        st.info(f"The data vendor found no listing matching **{text}**. "
+                f"Check the spelling, or type the ticker directly.", icon="🔍")
+        return
+
+    st.markdown(f'<p class="sx-note">Listings matching “{text}” — pick one to '
+                f'fetch its prices, fundamentals and news.</p>',
+                unsafe_allow_html=True)
+    for match in matches:
+        row = st.columns([4, 1], gap="small")
+        row[0].markdown(
+            f"**{match.name}**  \n"
+            f"<span style='opacity:.6'>{match.ticker} · {match.exchange}"
+            + (f" · {match.currency}" if match.currency else "") + "</span>",
+            unsafe_allow_html=True)
+        if not ctx.writable:
+            continue
+        if row[1].button("Fetch", key=f"lookup-{match.ticker}"):
+            from . import jobs
+
+            if jobs.running(ctx.db_path) is None:
+                _start_job(st, ctx, "ingest",
+                           ["--tickers", match.ticker, "--history", "800"])
+                st.caption("A single ticker takes well under a minute. Reload, "
+                           "then search it again — by name or ticker.")
+            else:
+                st.caption("Another job is already running; one at a time. "
+                           "Reload to check on it.")
+    if not ctx.writable:
+        st.caption("Fetch one with `sentinel ingest --tickers <SYMBOL>` and reload.")
 
 
 def _favourite_star(st, ctx: Context, ticker: str) -> None:
@@ -1027,6 +1093,41 @@ def _favourite_star(st, ctx: Context, ticker: str) -> None:
         st.rerun()
 
 
+def _trade_levels(ctx: Context, ticker: str) -> dict | None:
+    """Entry / stop / 1R / 2R for one ticker, or None when no honest stop
+    exists. ONE computation, shared by the trade-plan tiles and the lines on
+    the candle chart — two derivations would eventually disagree, and the
+    wrong one would be the one drawn where the decision happens."""
+    from ..analysis import technical
+    from ..storage import repo as repo_mod
+
+    bars = repo_mod.get_bars(ctx.conn, ticker)
+    if not bars:
+        return None
+    entry = bars[-1].adjusted_close
+    stop = technical.atr_stop(bars)
+    if stop is None or stop >= entry:
+        return None
+    risk = entry - stop
+    return {"entry": entry, "stop": stop, "r1": entry + risk,
+            "r2": entry + 2 * risk, "risk_per_share": risk,
+            "currency": bars[-1].currency}
+
+
+def _levels_frame(levels: dict) -> pd.DataFrame:
+    """The chart-ready form of `_trade_levels`: one row per horizontal rule."""
+    return pd.DataFrame([
+        {"label": f"Entry {levels['entry']:,.2f}",
+         "value": float(levels["entry"]), "kind": "entry"},
+        {"label": f"Stop {levels['stop']:,.2f}",
+         "value": float(levels["stop"]), "kind": "stop"},
+        {"label": f"Target 1R {levels['r1']:,.2f}",
+         "value": float(levels["r1"]), "kind": "target"},
+        {"label": f"Target 2R {levels['r2']:,.2f}",
+         "value": float(levels["r2"]), "kind": "target"},
+    ])
+
+
 def _trade_plan(st, ctx: Context, ticker: str) -> None:
     """Entry, stop-loss and take-profit levels IF the reader acts.
 
@@ -1039,17 +1140,11 @@ def _trade_plan(st, ctx: Context, ticker: str) -> None:
     """
     from decimal import Decimal as D
 
-    from ..analysis import technical
-    from ..storage import repo as repo_mod
-
-    bars = repo_mod.get_bars(ctx.conn, ticker)
-    if not bars:
+    levels = _trade_levels(ctx, ticker)
+    if levels is None:
         return
-    entry = bars[-1].adjusted_close
-    stop = technical.atr_stop(bars)
-    if stop is None or stop >= entry:
-        return
-    risk_per_share = entry - stop
+    entry, stop = levels["entry"], levels["stop"]
+    risk_per_share = levels["risk_per_share"]
     budget = ctx.config.satellite_capital_gbp * ctx.config.risk.risk_per_trade_pct / D("100")
     shares = int(budget / risk_per_share) if risk_per_share > 0 else 0
 
@@ -1059,7 +1154,7 @@ def _trade_plan(st, ctx: Context, ticker: str) -> None:
              "amount. Decide before you buy, not after.")
     row = st.columns(4, gap="small")
     for column, (label, value, note) in zip(row, [
-        ("Entry (last close)", f"{entry:,.2f}", bars[-1].currency),
+        ("Entry (last close)", f"{entry:,.2f}", levels["currency"]),
         ("Stop-loss", f"{stop:,.2f}", f"caps loss at {risk_per_share:,.2f}/share"),
         ("Target 1R", f"{entry + risk_per_share:,.2f}", "consider taking some profit"),
         ("Target 2R", f"{entry + 2 * risk_per_share:,.2f}", "consider taking the rest"),
@@ -1142,22 +1237,37 @@ def _ticker_detail(st, ctx: Context, ticker: str) -> None:
              "show the adjusted close against the long moving averages.",
     )
     if style.startswith("Daily candles"):
-        _section(st, "Price — daily candles",
-                 "Each candle is one trading day: the body runs open→close "
-                 "(blue closed higher, red closed lower), the thin wick spans "
-                 "the day's low→high. The lines are the 20 and 50-day "
-                 "averages — price above a rising average is trend support, "
-                 "not a promise. Hover a candle for its exact numbers.")
+        subtitle = ("Each candle is one trading day: the body runs open→close "
+                    "(blue closed higher, red closed lower), the thin wick spans "
+                    "the day's low→high. The lines are the 20 and 50-day "
+                    "averages — price above a rising average is trend support, "
+                    "not a promise. Hover a candle for its exact numbers.")
+        # The trade plan drawn on the chart itself — but ONLY under a BUY
+        # verdict, same policy as the plan tiles: levels under an AVOID would
+        # read as a wink to ignore it.
+        levels = _trade_levels(ctx, ticker) if verdict.stance == "BUY" else None
+        if levels is not None:
+            subtitle += (" The horizontal lines are the trade plan: solid red "
+                         "is the stop-loss, dashed green the 1R/2R "
+                         "profit-taking levels — discipline, not predictions.")
+        _section(st, "Price — daily candles", subtitle)
+        # The identity rides ON the chart: a scroll position (or screenshot)
+        # that has lost the page header must still say whose candles these are.
+        chart_title = f"{name} ({ticker})" if name else ticker
         ohlc = queries.ohlc_frame(ctx.conn, ticker)
-        _chart(st, charts.candlestick(ohlc, ctx.mode), key=f"candles-{ticker}")
+        _chart(st, charts.candlestick(
+            ohlc, ctx.mode, title=chart_title,
+            levels=_levels_frame(levels) if levels is not None else None,
+        ), key=f"candles-{ticker}")
         _table_twin(st, ohlc.tail(60))
     else:
         _section(st, "Price — trend",
                  "Adjusted close with the 50 and 200-day moving averages. Triangles mark "
                  "golden/death crosses — trend events the technical module also sees, "
                  "not buy/sell advice; the verdict above is the system's actual opinion.")
+        chart_title = f"{name} ({ticker})" if name else ticker
         prices = queries.price_frame(ctx.conn, ticker)
-        _chart(st, charts.price_history(prices, ctx.mode,
+        _chart(st, charts.price_history(prices, ctx.mode, title=chart_title,
                                         crosses=queries.sma_crosses(prices)),
                key=f"price-{ticker}")
         _table_twin(st, prices.tail(60))

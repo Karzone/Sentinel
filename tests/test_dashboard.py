@@ -1324,3 +1324,104 @@ class TestOhlcAndLeaderQueries:
             helper._approve(conn, idea)
         frame = queries.top_ideas_frame(conn, limit=5)
         assert frame["ticker"].tolist() == ["B.US", "F.US", "C.US", "D.US", "E.US"]
+
+
+class TestSearchByName:
+    """"should also be able to search by stock name not just ticker": the
+    option labels carry both spellings, and free text is classified as
+    ticker-shaped or name-shaped."""
+
+    def test_options_carry_ticker_and_name_and_map_back_to_the_ticker(self, conn):
+        from decimal import Decimal as D
+        from sentinel.domain.models import Bar, Fundamentals
+
+        day = dt.date(2026, 8, 21)
+        repo.save_bars(conn, [Bar(ticker="RKLB.US", date=day, open=D("40"),
+                                  high=D("41"), low=D("39"), close=D("40.5"),
+                                  adjusted_close=D("40.5"), volume=1,
+                                  currency="USD")], source="t")
+        repo.save_bars(conn, [Bar(ticker="NONAME.US", date=day, open=D("1"),
+                                  high=D("1"), low=D("1"), close=D("1"),
+                                  adjusted_close=D("1"), volume=1,
+                                  currency="USD")], source="t")
+        repo.save_fundamentals(conn, [Fundamentals(
+            ticker="RKLB.US", as_of=day, currency="USD",
+            company_name="Rocket Lab USA Inc", revenue_ttm=D("1"))], source="t")
+
+        options = queries.search_options(conn)
+        assert options["RKLB.US — Rocket Lab USA Inc"] == "RKLB.US"
+        # A stock with no stored name is listed by ticker, not hidden.
+        assert options["NONAME.US"] == "NONAME.US"
+
+    def test_ticker_shaped_vs_name_shaped(self):
+        for text in ("SOFI", "sofi", "brk.b", "VOD.LSE", "RKLB"):
+            assert queries.looks_like_ticker(text), text
+        for text in ("Rocket Lab", "NVIDIA", "rocket lab usa", ""):
+            assert not queries.looks_like_ticker(text), text
+
+
+class TestCandlestickLevels:
+    """The trade plan drawn on the chart: stop solid critical, targets dashed
+    good, every rule labelled — a status colour never carries meaning alone."""
+
+    def _levels(self):
+        return pd.DataFrame([
+            {"label": "Entry 100.00", "value": 100.0, "kind": "entry"},
+            {"label": "Stop 94.00", "value": 94.0, "kind": "stop"},
+            {"label": "Target 1R 106.00", "value": 106.0, "kind": "target"},
+            {"label": "Target 2R 112.00", "value": 112.0, "kind": "target"},
+        ])
+
+    def _ohlc(self):
+        helper = TestCandlestick()
+        return helper._frame(days=30)
+
+    def test_levels_add_rules_in_status_colours_with_labels(self):
+        p = pal.get("light")
+        spec = charts.candlestick(self._ohlc(), "light",
+                                  levels=self._levels()).to_dict()
+        assert len(spec["layer"]) == 5
+        rules = spec["layer"][3]
+        assert rules["mark"]["type"] == "rule"
+        scale = rules["encoding"]["color"]["scale"]
+        mapping = dict(zip(scale["domain"], scale["range"]))
+        assert mapping["stop"] == p.status["critical"]
+        assert mapping["target"] == p.status["good"]
+        # Dashed = aspiration (targets); solid = hard limit (stop).
+        dash = dict(zip(rules["encoding"]["strokeDash"]["scale"]["domain"],
+                        rules["encoding"]["strokeDash"]["scale"]["range"]))
+        assert dash["target"] != [1, 0] and dash["stop"] == [1, 0]
+        labels = spec["layer"][4]
+        assert labels["mark"]["type"] == "text"
+        assert labels["encoding"]["text"]["field"] == "label"
+
+    def test_no_levels_means_no_extra_layers(self):
+        spec = charts.candlestick(self._ohlc(), "light").to_dict()
+        assert len(spec["layer"]) == 3
+        spec = charts.candlestick(self._ohlc(), "light",
+                                  levels=pd.DataFrame()).to_dict()
+        assert len(spec["layer"]) == 3
+
+
+class TestChartCarriesTheStockName:
+    """"we have no idea what stock that is": a chart seen without its page
+    header (a scroll position, a screenshot) must name its own subject."""
+
+    def test_candlestick_title_names_the_stock(self):
+        frame = TestCandlestick()._frame(days=20)
+        spec = charts.candlestick(frame, "light",
+                                  title="NVIDIA Corporation (NVDA.US)").to_dict()
+        assert spec["title"]["text"] == "NVIDIA Corporation (NVDA.US)"
+
+    def test_price_history_title_names_the_stock(self):
+        frame = pd.DataFrame([
+            {"date": dt.date(2026, 8, 1) + dt.timedelta(days=i),
+             "close": 100.0 + i, "volume": 1} for i in range(10)
+        ])
+        spec = charts.price_history(frame, "light",
+                                    title="Rocket Lab USA (RKLB.US)").to_dict()
+        assert spec["title"]["text"] == "Rocket Lab USA (RKLB.US)"
+
+    def test_no_title_stays_untitled(self):
+        frame = TestCandlestick()._frame(days=20)
+        assert "title" not in charts.candlestick(frame, "light").to_dict()

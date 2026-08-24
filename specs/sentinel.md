@@ -248,7 +248,15 @@ Recorded so the gaps are known rather than discovered.
   50/200-day averages and cross markers. The Today page leads with a top-five leaderboard of
   accepted ideas (`score_leaders`): same rules-AND-risk gate as the Conviction board via
   `top_ideas_frame`, one hue on a full 0–100 scale, with a reference rule at the digest's
-  notable-70 bar.
+  notable-70 bar. Search accepts company names as well as tickers: known stocks are
+  offered as "TICKER — Company Name" labels (one substring filter finds both spellings), and an
+  unknown name goes through `data/lookup.py` — EODHD's symbol-search endpoint, one request per
+  submitted query (cached per session, never per keystroke), each match a Fetch button into the
+  normal ingest job. Under a BUY verdict the candle chart also draws the trade plan on the price
+  axis — entry (muted), stop (solid critical), 1R/2R targets (dashed good), every rule text-labelled
+  because a status colour never carries meaning alone; an AVOID/HOLD chart carries no levels, same
+  policy as the plan tiles. Both price charts title themselves with the stock's name and ticker, so
+  a screenshot or scroll position that has lost the page header still names its subject.
 - **Alpaca paper API.** The internal simulated ledger covers both UK and US names; the Alpaca
   integration the spec mentions for US names is not wired.
 - **Reddit / StockTwits sentiment.** The sentiment module accepts arbitrary text via `extra_texts`,

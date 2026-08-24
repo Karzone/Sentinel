@@ -468,3 +468,77 @@ class TestCompanyNameIsCaptured:
             [], [], [], profile=[{"companyName": ""}],
         )
         assert f.company_name is None
+
+
+class TestSymbolLookup:
+    """Name -> symbol resolution: "Rocket Lab" must become a fetchable RKLB.US
+    without the user knowing the ticker first."""
+
+    PAYLOAD = [
+        {"Code": "RKLB", "Exchange": "US", "Name": "Rocket Lab USA Inc",
+         "Type": "Common Stock", "Currency": "USD"},
+        {"Code": "0R2Half", "Exchange": "", "Name": "broken row"},
+        {"Code": "", "Exchange": "LSE", "Name": "also broken"},
+        {"Code": "rklb34", "Exchange": "sa", "Name": "Rocket Lab BDR",
+         "Currency": "BRL"},
+    ]
+
+    def test_parse_suffixes_the_exchange_and_drops_unfetchable_rows(self):
+        from sentinel.data import lookup
+
+        matches = lookup.parse_search(self.PAYLOAD)
+        assert [m.ticker for m in matches] == ["RKLB.US", "RKLB34.SA"]
+        assert matches[0].name == "Rocket Lab USA Inc"
+        assert matches[0].currency == "USD"
+
+    def test_parse_respects_the_limit(self):
+        from sentinel.data import lookup
+
+        rows = [{"Code": f"T{i}", "Exchange": "US", "Name": f"Test {i}"}
+                for i in range(10)]
+        assert len(lookup.parse_search(rows, limit=3)) == 3
+
+    def test_no_token_is_a_provider_error_not_a_crash(self, monkeypatch):
+        from sentinel.data import lookup
+        from sentinel.data.base import ProviderError
+
+        monkeypatch.delenv("EODHD_API_KEY", raising=False)
+        with pytest.raises(ProviderError, match="EODHD_API_KEY"):
+            lookup.search_symbols("Rocket Lab", token=None)
+
+    def test_the_call_carries_the_query_and_parses_the_answer(self):
+        import httpx
+        from sentinel.data import lookup
+
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return httpx.Response(200, json=self.PAYLOAD)
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        matches = lookup.search_symbols("Rocket Lab", token="k", client=client)
+        assert "/search/Rocket%20Lab" in seen["url"]
+        assert "api_token=k" in seen["url"]
+        assert matches[0].ticker == "RKLB.US"
+
+    def test_a_non_list_payload_is_a_provider_error(self):
+        import httpx
+        from sentinel.data import lookup
+        from sentinel.data.base import ProviderError
+
+        client = httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"error": "nope"})))
+        with pytest.raises(ProviderError, match="non-list"):
+            lookup.search_symbols("x", token="k", client=client)
+
+    def test_http_errors_are_redacted(self):
+        import httpx
+        from sentinel.data import lookup
+        from sentinel.data.base import ProviderError
+
+        client = httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(403, json={"message": "denied"})))
+        with pytest.raises(ProviderError) as excinfo:
+            lookup.search_symbols("x", token="sekret-token", client=client)
+        assert "sekret-token" not in str(excinfo.value)

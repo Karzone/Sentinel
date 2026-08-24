@@ -553,7 +553,8 @@ def score_leaders(
 
 def candlestick(
     frame: pd.DataFrame, mode: str, *, height: int = DEFAULT_HEIGHT,
-    sma: Sequence[int] = (20, 50),
+    sma: Sequence[int] = (20, 50), levels: pd.DataFrame | None = None,
+    title: str | None = None,
 ) -> alt.LayerChart | alt.Chart:
     """Daily candles with short moving averages.
 
@@ -624,19 +625,67 @@ def candlestick(
             ),
         )
     )
-    # Candle direction and the SMA legend are different encodings, not one
-    # series scale — left shared, the legend would swallow True/False and the
-    # candles would repaint with series hues.
-    return (
-        alt.layer(wicks, bodies, averages)
-        .resolve_scale(color="independent")
+    parts = [wicks, bodies, averages]
+    if levels is not None and not levels.empty:
+        # The trade plan drawn where the decision happens: entry, stop and the
+        # 1R/2R targets as horizontal rules. Stop and targets wear the status
+        # palette — they ARE states, "sell here to cap the loss" and "consider
+        # taking profit here" — and each rule carries its own text label,
+        # because a status colour never carries meaning alone. Targets are
+        # dashed (they are the profit-taking convention, an aspiration);
+        # the stop is solid (it is a hard limit, like the drawdown kill line).
+        lv = levels.copy()
+        lv["date"] = data["date"].max()
+        colour = alt.Color(
+            "kind:N",
+            scale=alt.Scale(domain=["entry", "stop", "target"],
+                            range=[p.ink_muted, p.status["critical"],
+                                   p.status["good"]]),
+            legend=None,
+        )
+        rules = (
+            alt.Chart(lv)
+            .mark_rule(strokeWidth=1)
+            .encode(
+                y=alt.Y("value:Q", scale=alt.Scale(zero=False)),
+                color=colour,
+                strokeDash=alt.StrokeDash(
+                    "kind:N",
+                    scale=alt.Scale(domain=["entry", "stop", "target"],
+                                    range=[[1, 0], [1, 0], [5, 3]]),
+                    legend=None,
+                ),
+                tooltip=[alt.Tooltip("label:N", title=""),
+                         alt.Tooltip("value:Q", title="Level", format=",.2f")],
+            )
+        )
+        level_labels = (
+            alt.Chart(lv)
+            .mark_text(align="right", baseline="bottom", dx=-2, dy=-2,
+                       fontSize=10, font=pal.FONT, color=p.ink_secondary)
+            .encode(x="date:T", y=alt.Y("value:Q", scale=alt.Scale(zero=False)),
+                    text="label:N")
+        )
+        parts += [rules, level_labels]
+    # Candle direction, the SMA legend and the level kinds are different
+    # encodings, not one series scale — left shared, one legend would swallow
+    # the others and the candles would repaint with series hues.
+    chart = (
+        alt.layer(*parts)
+        .resolve_scale(color="independent", strokeDash="independent")
         .properties(height=height, width="container")
     )
+    if title:
+        # The stock's identity ON the chart itself — a screenshot or a scroll
+        # position that has lost the page header must still say whose candles
+        # these are.
+        chart = chart.properties(title=alt.TitleParams(text=title))
+    return chart
 
 
 def price_history(
     frame: pd.DataFrame, mode: str, *, height: int = DEFAULT_HEIGHT,
-    crosses: pd.DataFrame | None = None,
+    crosses: pd.DataFrame | None = None, title: str | None = None,
 ) -> alt.LayerChart | alt.Chart:
     """Adjusted close with its 50 and 200-day moving averages.
 
@@ -709,5 +758,8 @@ def price_history(
         # more series, so their scales must stay their own.
         chart = (lines + markers).resolve_scale(color="independent",
                                                 shape="independent")
-    return chart.properties(height=height, width="container")
+    chart = chart.properties(height=height, width="container")
+    if title:
+        chart = chart.properties(title=alt.TitleParams(text=title))
+    return chart
 

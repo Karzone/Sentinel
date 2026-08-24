@@ -602,6 +602,38 @@ def searchable_tickers(conn: sqlite3.Connection) -> list[str]:
     return repo.tickers_with_bars(conn)
 
 
+def search_options(conn: sqlite3.Connection) -> dict[str, str]:
+    """Search-box labels -> tickers, for every stock the app holds bars on.
+
+    The label carries BOTH spellings — "NVDA.US — NVIDIA Corporation" — because
+    the select box filters options by substring, so typing "nvidia" and typing
+    "nvda" land on the same row. A stock whose fundamentals never carried a
+    name is listed by ticker alone rather than hidden.
+    """
+    options: dict[str, str] = {}
+    for ticker in repo.tickers_with_bars(conn):
+        name = company_name(conn, ticker)
+        label = f"{ticker} — {name}" if name else ticker
+        options[label] = ticker
+    return options
+
+
+def looks_like_ticker(text: str) -> bool:
+    """Is this entry ticker-shaped ("SOFI", "brk.b", "VOD.LSE") rather than a
+    company name ("Rocket Lab", "NVIDIA")?
+
+    The split decides which unknown-entry path runs: ticker-shaped text gets
+    the direct fetch offer, anything else goes to the vendor's name search.
+    Deliberately strict about length — real tickers are 1–5 characters before
+    the suffix, so a six-letter word like "NVIDIA" is read as a name.
+    """
+    import re
+
+    return bool(re.fullmatch(
+        r"[A-Za-z0-9]{1,5}([.-][A-Za-z0-9]{1,4})?", text.strip()
+    ))
+
+
 def latest_idea_for(conn: sqlite3.Connection, ticker: str, *, days: int = 365) -> Idea | None:
     since = dt.date.today() - dt.timedelta(days=days)
     matches = [i for i in repo.get_ideas(conn, since=since, limit=2000) if i.ticker == ticker]
