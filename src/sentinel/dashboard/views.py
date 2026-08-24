@@ -528,6 +528,66 @@ def evals(st, ctx: Context) -> None:
 # ---------------------------------------------------------------- 5. data health
 
 
+def _run_jobs_panel(st, ctx: Context) -> None:
+    """Start ingest / the weekly pipeline from the page — local sessions only.
+
+    The job is a detached process with a lock file (`dashboard.jobs`), so a
+    closed tab does not kill it and a double click cannot start it twice. The
+    page shows liveness from the lock and the last lines of the job log; the
+    numbers above refresh on reload once the run completes.
+    """
+    if not ctx.writable:
+        return
+
+    from . import jobs
+
+    current = jobs.running(ctx.db_path)
+    with st.expander("Run a job — the same commands the terminal runs",
+                     expanded=current is not None):
+        if current is not None:
+            st.info(f"`{current.name}` running since {current.started_at} "
+                    f"(pid {current.pid}). Reload to refresh; closing this tab "
+                    f"does not stop it.", icon="⏳")
+            if st.button("Refresh status"):
+                st.rerun()
+        else:
+            left, right = st.columns(2, gap="medium")
+            with left:
+                st.markdown("**Fetch latest data** — prices, fundamentals and "
+                            "news for one universe (`sentinel ingest`).")
+                universes = sorted(ctx.config.universes) or ["core"]
+                universe = st.selectbox("Universe", universes,
+                                        index=universes.index("ai") if "ai" in universes else 0)
+                history = st.number_input("Days of price history", min_value=30,
+                                          max_value=2000, value=600, step=10)
+                if st.button("Run ingest"):
+                    _start_job(st, ctx, "ingest",
+                               ["--universe", universe, "--history", str(int(history))])
+            with right:
+                st.markdown("**Run the weekly pipeline** — scores the pool and "
+                            "writes the brief (`sentinel weekly`). Calls the "
+                            "LLM: costs API credits and a few minutes.")
+                if st.button("Run weekly"):
+                    _start_job(st, ctx, "weekly", [])
+
+        log_tail = jobs.tail(ctx.db_path)
+        if log_tail:
+            with st.expander("Job log (last 40 lines)"):
+                st.code(log_tail)
+
+
+def _start_job(st, ctx: Context, name: str, extra: list[str]) -> None:
+    from . import jobs
+
+    try:
+        job = jobs.start(name, db_path=ctx.db_path, extra_args=extra)
+    except jobs.JobRefused as exc:
+        st.error(str(exc), icon="⛔")
+    else:
+        st.success(f"Started `{job.name}` (pid {job.pid}). It keeps running if "
+                   f"you close this page; reload to see progress.", icon="🚀")
+
+
 def data_health(st, ctx: Context) -> None:
     st.markdown("### Data health")
     st.markdown(
@@ -535,6 +595,8 @@ def data_health(st, ctx: Context) -> None:
         'means the ticker was not scored at all — not scored-and-flagged.</p>',
         unsafe_allow_html=True,
     )
+
+    _run_jobs_panel(st, ctx)
 
     counts = queries.severity_counts(ctx.conn)
     row = st.columns(3, gap="small")

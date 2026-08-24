@@ -222,8 +222,16 @@ Recorded so the gaps are known rather than discovered.
   `manual.allowed_in` says so: a LOCAL session (`SENTINEL_DASHBOARD_LOCAL`, which the hosted
   deploy pops) on a NON-demo database (a real fill inside fabricated history would be the one
   real-looking number on a page that promises there are none). The page's own connection stays
-  read-only; each recording opens its own write connection for one transaction. Triggering
-  *ingest* from the page remains out — that stays CLI/scheduled.
+  read-only; each recording opens its own write connection for one transaction. The Data health
+  page can also START the two long jobs (2026-08-24 owner decision, superseding the line that
+  ingest stays CLI-only): `dashboard.jobs` runs `sentinel ingest` / `sentinel weekly` as a
+  DETACHED subprocess (it survives the tab and the dashboard; output to a log file next to the
+  database) under a pid lock file (atomic O_EXCL create; one job at a time; a lock whose pid is
+  dead is stale and self-clears). Liveness must consult the Popen handle, not just
+  `os.kill(pid, 0)` — an exited child is a zombie until its parent reaps it, and the pid probe
+  calls a zombie alive, so a finished ingest would otherwise read as "running" until the
+  dashboard restarted. Only names in `jobs.COMMANDS` can run: the page hands over a choice,
+  never a command line. Same `ctx.writable` gate as Record-a-trade (local + non-demo).
   The Search page plots golden/death crosses on the price chart (deterministic trend events, not
   advice — the verdict banner stays the system's opinion) and shows the stored news headlines the
   sentiment module scored, which were previously captured and shown to nobody.
