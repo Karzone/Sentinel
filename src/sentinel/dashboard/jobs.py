@@ -212,3 +212,30 @@ def tail(db_path: str | Path, *, lines: int = 40) -> str:
     except FileNotFoundError:
         return ""
     return "\n".join(text.splitlines()[-lines:])
+
+
+@dataclass(frozen=True, slots=True)
+class Progress:
+    """What the log says about how far the job has got. `done`/`total` come
+    from the last "[n/m]" marker (both ingest and brief print one per
+    ticker); `line` is the last non-empty log line either way, so a stage
+    with no counter still shows SOMETHING moving."""
+
+    done: int | None
+    total: int | None
+    line: str
+
+
+def progress(db_path: str | Path) -> Progress:
+    import re
+
+    text = tail(db_path, lines=60)
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    last_line = lines[-1] if lines else ""
+    done = total = None
+    for line in reversed(lines):
+        found = re.search(r"\[(\d+)/(\d+)\]", line)
+        if found:
+            done, total = int(found.group(1)), int(found.group(2))
+            break
+    return Progress(done=done, total=total, line=last_line)

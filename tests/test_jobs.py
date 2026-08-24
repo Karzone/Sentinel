@@ -159,3 +159,32 @@ class TestWindowsLiveness:
             raise AssertionError("os.kill probed on Windows")
         monkeypatch.setattr(jobs.os, "kill", boom)
         assert jobs.running(db) is None
+
+
+class TestProgress:
+    """"Is it doing anything?" — the [n/m] the job logs, parsed back for the
+    dashboard's progress bar."""
+
+    def _write_log(self, db, text):
+        jobs.log_path(db).write_text(text)
+
+    def test_reads_the_last_counter_and_the_last_line(self, db):
+        self._write_log(db, "\n".join([
+            "starting ingest",
+            "[1/27] fetching NVDA.US",
+            "[2/27] fetching PLTR.US",
+            "saved 800 bars",
+        ]))
+        prog = jobs.progress(db)
+        assert (prog.done, prog.total) == (2, 27)
+        assert prog.line == "saved 800 bars"
+
+    def test_no_counter_still_reports_the_last_line(self, db):
+        self._write_log(db, "warming up\nconnecting to vendor\n")
+        prog = jobs.progress(db)
+        assert (prog.done, prog.total) == (None, None)
+        assert prog.line == "connecting to vendor"
+
+    def test_a_missing_log_is_empty_not_a_crash(self, db):
+        prog = jobs.progress(db)
+        assert prog == jobs.Progress(done=None, total=None, line="")

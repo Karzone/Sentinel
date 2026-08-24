@@ -176,8 +176,7 @@ def today(st, ctx: Context) -> None:
 
         current = jobs.running(ctx.db_path)
         if current is not None:
-            st.info(f"`{current.name}` is running (started {current.started_at}). "
-                    f"Reload this page to check on it.", icon="⏳")
+            _running_job_panel(st, ctx, key="today-job")
         else:
             left, right = st.columns(2, gap="medium")
             with left:
@@ -529,6 +528,41 @@ def _record_trade_forms(st, ctx: Context) -> None:
                             )
 
 
+def _running_job_panel(st, ctx: Context, key: str) -> None:
+    """Live progress for the one background job.
+
+    "Is it doing anything?" used to be answered by reloading the page and
+    reading a log expander. This shows the [n/m] the job itself logs as a
+    progress bar, plus the last log line, and — where Streamlit supports
+    fragments — refreshes itself every few seconds without touching the rest
+    of the page. Falls back to a Refresh button on older Streamlit.
+    """
+    from . import jobs
+
+    def body() -> None:
+        current = jobs.running(ctx.db_path)
+        if current is None:
+            st.success("The job has finished — reload the page to see the "
+                       "results.", icon="✅")
+            return
+        st.info(f"`{current.name}` is running (started {current.started_at}). "
+                f"Closing this page does not stop it.", icon="⏳")
+        prog = jobs.progress(ctx.db_path)
+        if prog.done and prog.total:
+            st.progress(min(prog.done / prog.total, 1.0),
+                        text=f"{prog.done} of {prog.total} tickers")
+        if prog.line:
+            st.caption(f"Latest: `{prog.line[-160:]}`")
+
+    fragment = getattr(st, "fragment", None)
+    if fragment is not None:
+        fragment(run_every="2.5s")(body)()
+    else:
+        body()
+        if st.button("Refresh progress", key=f"{key}-refresh"):
+            st.rerun()
+
+
 def _offer_fetch(st, ctx: Context, ticker: str) -> None:
     """A ticker we hold nothing on. Say so, and offer to change that.
 
@@ -546,8 +580,7 @@ def _offer_fetch(st, ctx: Context, ticker: str) -> None:
 
     current = jobs.running(ctx.db_path)
     if current is not None:
-        st.caption(f"`{current.name}` is already running (started "
-                   f"{current.started_at}); one job at a time. Reload to check.")
+        _running_job_panel(st, ctx, key="fetch-job")
         return
     left, right = st.columns(2, gap="medium")
     with left:
@@ -857,11 +890,7 @@ def _run_jobs_panel(st, ctx: Context) -> None:
     with st.expander("Run a job — the same commands the terminal runs",
                      expanded=current is not None):
         if current is not None:
-            st.info(f"`{current.name}` running since {current.started_at} "
-                    f"(pid {current.pid}). Reload to refresh; closing this tab "
-                    f"does not stop it.", icon="⏳")
-            if st.button("Refresh status"):
-                st.rerun()
+            _running_job_panel(st, ctx, key="health-job")
         else:
             universes = sorted(ctx.config.universes) or ["core"]
             universe = st.selectbox("Universe", universes,
@@ -993,6 +1022,11 @@ def search(st, ctx: Context) -> None:
     if not chosen:
         st.caption("Pick a suggestion or type any name/symbol to see its "
                    "statistics, chart, news and the app's verdict.")
+        if options and not any(" — " in label for label in options):
+            st.caption("Suggestions show tickers only right now — company "
+                       "names arrive with the next data fetch (names ride in "
+                       "with fundamentals). Typing a NEW company's name "
+                       "already works: it asks the data vendor directly.")
         return
     if chosen in options:
         _ticker_detail(st, ctx, options[chosen])

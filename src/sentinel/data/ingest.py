@@ -75,7 +75,11 @@ def ingest(
                  "price_provider": prices.name, "version": INGEST_VERSION},
     )
 
-    for ticker in tickers:
+    for index, ticker in enumerate(tickers, start=1):
+        # The dashboard's job panel parses this exact [n/m] shape to draw a
+        # progress bar, and a silent 25-ticker fetch is indistinguishable
+        # from a hung one — same lesson as the brief's per-ticker lines.
+        log.info("[%d/%d] fetching %s", index, len(tickers), ticker)
         # -- prices
         if prices.available():
             try:

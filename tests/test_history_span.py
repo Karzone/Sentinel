@@ -239,3 +239,19 @@ class TestWarningsAreGroupedNotTruncated:
             self._issue("vendor", "B.US", "fundamentals vendor fmp failed: 402"),
         ])
         assert len(lines) == 2
+
+
+class TestIngestSaysWhereItIs:
+    def test_every_ticker_gets_a_progress_line(self, conn, config, caplog):
+        """A silent 25-ticker fetch is indistinguishable from a hung one; the
+        dashboard's progress bar parses these exact [n/m] markers."""
+        import logging
+
+        from sentinel.data import ingest as ingest_mod
+
+        with caplog.at_level(logging.INFO, logger="sentinel.ingest"):
+            ingest_mod.ingest(conn, config, ["A.US", "B.US"], as_of=AS_OF,
+                              with_news=False, history_days=300)
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("[1/2] fetching A.US" in m for m in messages)
+        assert any("[2/2] fetching B.US" in m for m in messages)
