@@ -647,6 +647,44 @@ def conviction_board(
     return qualifying, near_miss
 
 
+def today_status(conn: sqlite3.Connection, briefs_dir: str | Path) -> dict[str, Any]:
+    """Everything the Today page needs to say "here is where you are".
+
+    Built for a beginner's first question — "what do I do now?" — which none
+    of the specialist pages answer: they each assume you already know the
+    routine. One dict, plain facts: how fresh the data is, whether today's
+    brief exists, and whether any position needs attention.
+    """
+    today = dt.date.today()
+    tickers = repo.tickers_with_bars(conn)
+    last_bar: dt.date | None = None
+    for ticker in tickers:
+        candidate = repo.latest_bar_date(conn, ticker)
+        if candidate and (last_bar is None or candidate > last_bar):
+            last_bar = candidate
+    data_age = (today - last_bar).days if last_bar else None
+
+    brief_today = any(
+        path.name == f"{today.isoformat()}.md" for path in list_reports(briefs_dir)
+    )
+
+    positions = positions_frame(conn)
+    trouble = 0
+    if not positions.empty:
+        # A mark at or below the stop is the brief's "Action needed" case.
+        below = positions["mark"] <= positions["stop"]
+        trouble = int(below.fillna(False).sum())
+
+    return {
+        "tickers": len(tickers),
+        "last_bar": last_bar,
+        "data_age_days": data_age,
+        "brief_today": brief_today,
+        "open_positions": 0 if positions.empty else len(positions),
+        "positions_below_stop": trouble,
+    }
+
+
 def list_reports(briefs_dir: str | Path) -> list[Path]:
     """Every written brief/review, newest first — the files `sentinel brief`
     and `sentinel weekly` leave in `paths.briefs`. The terminal was the only

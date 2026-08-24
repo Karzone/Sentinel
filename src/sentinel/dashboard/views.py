@@ -64,6 +64,125 @@ def _section(st, title: str, subtitle: str | None = None) -> None:
 # ---------------------------------------------------------------- 1. portfolio
 
 
+def today(st, ctx: Context) -> None:
+    """The landing page, written for someone who does not know the routine yet.
+
+    Every other page answers a specialist question; this one answers "what do
+    I do now?" — status in plain words, the next step as a button, and the
+    best current ideas one click from their full reasoning. No term of art
+    appears without a plain-English gloss.
+    """
+    st.markdown("### Today")
+    status = queries.today_status(ctx.conn, ctx.config.paths.briefs)
+
+    row = st.columns(3, gap="small")
+    age = status["data_age_days"]
+    with row[0]:
+        if status["last_bar"] is None:
+            st.markdown(ui.tile("Market data", "none yet",
+                                delta="fetch data to begin", delta_status="warning",
+                                mode=ctx.mode), unsafe_allow_html=True)
+        else:
+            fresh = age is not None and age <= 3  # weekends make 2-3 normal
+            st.markdown(ui.tile(
+                "Market data", f"{status['tickers']} stocks",
+                delta=(f"prices up to {status['last_bar']}"
+                       + ("" if fresh else f" — {age} days old")),
+                delta_status=None if fresh else "warning", mode=ctx.mode,
+            ), unsafe_allow_html=True)
+    with row[1]:
+        st.markdown(ui.tile(
+            "Today's report", "ready" if status["brief_today"] else "not yet",
+            delta=("open the Reports page" if status["brief_today"]
+                   else "run it below, or wait for the 7am schedule"),
+            delta_status=None if status["brief_today"] else "warning",
+            mode=ctx.mode,
+        ), unsafe_allow_html=True)
+    with row[2]:
+        trouble = status["positions_below_stop"]
+        st.markdown(ui.tile(
+            "Your positions", str(status["open_positions"]),
+            delta=(f"{trouble} below its stop — see Portfolio" if trouble
+                   else ("all above their stops" if status["open_positions"]
+                         else "none recorded yet")),
+            delta_status="critical" if trouble else None, mode=ctx.mode,
+        ), unsafe_allow_html=True)
+
+    st.divider()
+    _section(st, "Best current ideas",
+             "The system's strongest cases that passed every safety check. "
+             "The score is out of 100 — how much the evidence agrees. Click "
+             "through for the full reasoning; nothing here is advice.")
+    qualifying, _ = queries.conviction_board(ctx.conn, min_score=0)
+    if not qualifying:
+        st.info("No scored ideas yet. Fetch data and run the report below — "
+                "then the best ideas appear here.", icon="🌱")
+    else:
+        cards = st.columns(min(3, len(qualifying[:3])), gap="medium")
+        for index, idea_ in enumerate(qualifying[:3]):
+            with cards[index]:
+                st.markdown(ui.tile(
+                    idea_.ticker, f"{idea_.composite_score:.0f}",
+                    delta=(idea_.memo.thesis.split(". ")[0][:90] + "…"
+                           if idea_.memo else "scored on the numbers only"),
+                    mode=ctx.mode,
+                ), unsafe_allow_html=True)
+        st.caption("Full reasoning — thesis, risks, what would prove it wrong — "
+                   "is on the **Conviction** page.")
+
+    if ctx.writable:
+        st.divider()
+        _section(st, "Do it now", "The two buttons that drive everything. "
+                                  "They run in the background; reload to see progress.")
+        from . import jobs
+
+        current = jobs.running(ctx.db_path)
+        if current is not None:
+            st.info(f"`{current.name}` is running (started {current.started_at}). "
+                    f"Reload this page to check on it.", icon="⏳")
+        else:
+            left, right = st.columns(2, gap="medium")
+            with left:
+                if st.button("1 · Get fresh market data (≈2 min)"):
+                    _start_job(st, ctx, "ingest", ["--universe", "ai"])
+            with right:
+                if st.button("2 · Score everything & write today's report (≈20 min)"):
+                    _start_job(st, ctx, "brief", ["--universe", "ai"])
+
+    st.divider()
+    with st.expander("How to use Sentinel — the 5-minute routine"):
+        st.markdown(
+            """
+1. **Morning (automatic).** At 7am the app fetches fresh prices and news and
+   writes the day's report. If you skipped a day, use the two buttons above.
+2. **Read the report** — *Reports* page. Top section is **Action needed**:
+   anything you own that hit its stop. Then the best new ideas, each with the
+   reasons for and against.
+3. **Check the best ideas** — *Conviction* page. Only ideas that passed every
+   safety check appear. Click a name for the full case.
+4. **Curious about any stock?** — *Search* page. Type any ticker (e.g. SOFI).
+   If the app has never seen it, one button fetches it and one more scores it.
+5. **If you actually trade at your broker**, record it — *Portfolio* page →
+   "Record a trade". Then the app watches your stops and reports your
+   performance honestly.
+
+**The words, in plain English**
+- **Composite / score** — 0-100, how strongly all the evidence agrees. 70+ is
+  notable; 50 is neutral; below 50 the app does not even write up the idea.
+- **Conviction** — the writer's own low/medium/high confidence in the idea.
+- **Invalidation / "wrong if"** — the pre-agreed exit sign. If it happens,
+  the idea is over; no debating with yourself.
+- **Stop** — the price at which you sell to cap the loss. The app suggests
+  one with every idea and warns when a holding falls through it.
+- **Satellite** — the small pot of money this app plays with (set in
+  `sentinel.toml`), separate from long-term savings. Every limit is a
+  percentage of it.
+- **This app never trades for you.** It researches, you decide. Every number
+  is research output, not financial advice.
+            """
+        )
+
+
 def conviction(st, ctx: Context) -> None:
     st.markdown("### Conviction")
     st.markdown(
@@ -961,6 +1080,7 @@ def _stat_tiles(st, ctx: Context, stats: dict) -> None:
 
 
 PAGES = [
+    ("Today", today),
     ("Portfolio", portfolio),
     ("Conviction", conviction),
     ("Risk", risk),

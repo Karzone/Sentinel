@@ -1076,3 +1076,54 @@ class TestConvictionBoard:
     def test_an_empty_database_yields_nothing_and_no_near_miss(self, conn):
         qualifying, near = queries.conviction_board(conn, min_score=80)
         assert qualifying == [] and near is None
+
+
+class TestTodayStatus:
+    """The landing page's one question: "what do I do now?" — the status dict
+    behind it, asserted in both fresh and stale states."""
+
+    def test_an_empty_database_says_begin_at_the_beginning(self, conn, tmp_path):
+        status = queries.today_status(conn, tmp_path)
+        assert status["tickers"] == 0
+        assert status["last_bar"] is None
+        assert status["brief_today"] is False
+        assert status["open_positions"] == 0
+
+    def test_fresh_data_and_todays_brief_are_recognised(self, conn, tmp_path):
+        from decimal import Decimal as D
+        from sentinel.domain.models import Bar
+
+        today = dt.date.today()
+        repo.save_bars(conn, [Bar(ticker="A.US", date=today, open=D("1"),
+                                  high=D("1"), low=D("1"), close=D("1"),
+                                  adjusted_close=D("1"), volume=1,
+                                  currency="USD")], source="t")
+        (tmp_path / f"{today.isoformat()}.md").write_text("# brief")
+        status = queries.today_status(conn, tmp_path)
+        assert status["last_bar"] == today
+        assert status["data_age_days"] == 0
+        assert status["brief_today"] is True
+
+    def test_yesterdays_brief_does_not_count_as_todays(self, conn, tmp_path):
+        yesterday = dt.date.today() - dt.timedelta(days=1)
+        (tmp_path / f"{yesterday.isoformat()}.md").write_text("# old")
+        assert queries.today_status(conn, tmp_path)["brief_today"] is False
+
+    def test_a_position_below_its_stop_is_counted_as_trouble(self, conn, tmp_path):
+        from decimal import Decimal as D
+        from sentinel.domain.models import Bar, Position
+
+        today = dt.date.today()
+        repo.save_bars(conn, [Bar(ticker="A.US", date=today, open=D("50"),
+                                  high=D("50"), low=D("50"), close=D("50"),
+                                  adjusted_close=D("50"), volume=1,
+                                  currency="USD")], source="t")
+        repo.save_position(conn, Position(
+            ticker="A.US", idea_id="manual", idea_class="long_term",
+            sector="tech", opened_on=today, shares=1, entry=D("80"),
+            stop=D("60")))
+        status = queries.today_status(conn, tmp_path)
+        assert status["open_positions"] == 1
+        assert status["positions_below_stop"] == 1, (
+            "mark 50 under stop 60 is the brief's Action-needed case — the "
+            "landing page must not show a calm zero")
