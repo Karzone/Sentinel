@@ -617,6 +617,42 @@ def price_frame(conn: sqlite3.Connection, ticker: str, *, days: int = 365) -> pd
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["date", "close", "volume"])
 
 
+def memo_absence_reason(conn: sqlite3.Connection, item: Idea) -> str | None:
+    """Why this idea has no memo — from the audit trail, not a guess.
+
+    The detail page used to show one static sentence ("Without an LLM
+    configured …") for every memo-less idea. But the pipeline has three
+    distinct reasons a memo is absent, and two of them mean the opposite of
+    "not configured": the composite never reached the memo bar, or the LLM ran
+    and its call FAILED — which the pipeline records per ticker as
+    LLM_SCHEMA_FAILURE precisely so the failure rate is measurable (§5.2). The
+    audit trail knows which one happened; showing a guess instead of reading
+    it is how "why is everything rejected?" becomes a support question.
+    """
+    if item.memo is not None:
+        return None
+    if item.composite_score < Decimal("50"):
+        return (f"No memo: the composite ({item.composite_score:.0f}) is below the "
+                f"memo bar of 50, so the pipeline never asks the LLM for one. A "
+                f"long-term idea without a memo has no written invalidation, so "
+                f"the risk layer refuses it — the intended degradation.")
+    day = item.as_of.isoformat()
+    for row in conn.execute(
+        "SELECT payload FROM audit WHERE event = ? AND ticker = ? "
+        "AND substr(ts, 1, 10) = ? ORDER BY id DESC LIMIT 1",
+        (audit.AuditEvent.LLM_SCHEMA_FAILURE, item.ticker, day),
+    ):
+        error = (json.loads(row["payload"]) or {}).get("error", "unknown error")
+        return (f"No memo: the LLM was configured but its call FAILED on this run — "
+                f"{error} — so there is no written invalidation and the risk layer "
+                f"refuses the idea. Fix the LLM error and re-run `sentinel weekly`.")
+    return ("No memo: no LLM was configured when this run happened (the composite "
+            "cleared the bar and no failed call is recorded). The deterministic "
+            "modules still score, but nothing writes an invalidation, so the risk "
+            "layer refuses every long-term idea. Set ANTHROPIC_API_KEY in .env and "
+            "re-run `sentinel weekly`.")
+
+
 def news_frame(conn: sqlite3.Connection, ticker: str, *, days: int = 14,
                limit: int = 25) -> pd.DataFrame:
     """Recent headlines for one ticker, newest first.

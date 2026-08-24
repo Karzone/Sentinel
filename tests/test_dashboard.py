@@ -903,3 +903,60 @@ class TestNewsFrame:
             ticker="AMD.US", published_at=dt.datetime.now(dt.UTC),
             headline="About AMD", source="", url="")])
         assert queries.news_frame(conn, "NVDA.US").empty
+
+
+class TestMemoAbsenceReason:
+    """The detail page used to show ONE static sentence ('Without an LLM
+    configured …') for every memo-less idea — a guess. The pipeline has three
+    distinct reasons and records enough in the audit trail to tell them apart;
+    two of them mean the opposite of "not configured"."""
+
+    def _idea(self, score, ticker="NVDA.US"):
+        from sentinel.analysis import synthesis
+        from sentinel.domain.models import Signal
+
+        return synthesis.build_idea(
+            ticker,
+            [Signal(module="technical", module_version="test-1", ticker=ticker,
+                    as_of=dt.date(2026, 8, 23), score=Decimal(score))],
+            dt.date(2026, 8, 23),
+        )
+
+    def test_a_memo_carrying_idea_needs_no_reason(self, conn):
+        idea = self._idea(70)
+        assert idea.memo is None  # build_idea without memo
+        # (the None-memo branch is the subject; a memo'd idea short-circuits)
+        from sentinel.domain.models import IdeaMemo
+        memod = idea.model_copy(update={"memo": IdeaMemo(
+            ticker="NVDA.US", thesis="t", bull_case="b", bear_case="b",
+            invalidation="price < 100", idea_class="long_term",
+            conviction="medium", horizon_days=90)})
+        assert queries.memo_absence_reason(conn, memod) is None
+
+    def test_below_the_bar_is_named_as_below_the_bar(self, conn):
+        reason = queries.memo_absence_reason(conn, self._idea(38))
+        assert "below the" in reason and "50" in reason
+        assert "ANTHROPIC_API_KEY" not in reason, (
+            "an idea the pipeline never asks the LLM about must not tell the "
+            "user to configure the LLM")
+
+    def test_a_recorded_llm_failure_is_reported_as_the_failure_it_was(self, conn):
+        from sentinel.storage import audit
+        audit.record(conn, audit.AuditEvent.LLM_SCHEMA_FAILURE, ticker="NVDA.US",
+                     payload={"error": "401 authentication_error"},
+                     at=dt.datetime(2026, 8, 23, 9, 0, tzinfo=dt.UTC))
+        reason = queries.memo_absence_reason(conn, self._idea(70))
+        assert "FAILED" in reason and "401 authentication_error" in reason
+
+    def test_another_days_failure_does_not_explain_this_run(self, conn):
+        from sentinel.storage import audit
+        audit.record(conn, audit.AuditEvent.LLM_SCHEMA_FAILURE, ticker="NVDA.US",
+                     payload={"error": "old"},
+                     at=dt.datetime(2026, 7, 1, 9, 0, tzinfo=dt.UTC))
+        reason = queries.memo_absence_reason(conn, self._idea(70))
+        assert "old" not in reason
+        assert "no LLM was configured" in reason
+
+    def test_no_failure_and_over_the_bar_means_no_key(self, conn):
+        reason = queries.memo_absence_reason(conn, self._idea(70))
+        assert "ANTHROPIC_API_KEY" in reason and "re-run" in reason

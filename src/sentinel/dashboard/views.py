@@ -400,12 +400,10 @@ def ideas(st, ctx: Context) -> None:
                 unsafe_allow_html=True,
             )
         else:
-            st.info(
-                "No memo. Without an LLM configured the deterministic modules still score, "
-                "but there is no written invalidation — so the risk layer refuses the idea. "
-                "That is the intended degradation, not a failure.",
-                icon="ℹ️",
-            )
+            # The audit trail knows WHY the memo is missing (no LLM, a failed
+            # call, or a composite under the bar) — never guess when it can be
+            # read back.
+            st.info(queries.memo_absence_reason(ctx.conn, item), icon="ℹ️")
         if item.rejected_by_rules:
             st.markdown(ui.badge("critical", "Rejected by the rules layer"), unsafe_allow_html=True)
             for reason in item.rejected_by_rules:
