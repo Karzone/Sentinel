@@ -617,6 +617,29 @@ def price_frame(conn: sqlite3.Connection, ticker: str, *, days: int = 365) -> pd
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["date", "close", "volume"])
 
 
+def list_reports(briefs_dir: str | Path) -> list[Path]:
+    """Every written brief/review, newest first — the files `sentinel brief`
+    and `sentinel weekly` leave in `paths.briefs`. The terminal was the only
+    place these ever appeared; the Reports page renders them."""
+    directory = Path(briefs_dir)
+    if not directory.is_dir():
+        return []
+    return sorted(directory.glob("*.md"), key=lambda p: p.name, reverse=True)
+
+
+def normalize_ticker(raw: str) -> str:
+    """Free-text ticker -> the exchange-suffixed form the pipeline uses.
+
+    A bare US symbol ("sofi") becomes SOFI.US; anything already carrying a
+    suffix is respected. The suffix is required because currency inference
+    hangs off it — a bare ticker would be treated as GBP.
+    """
+    ticker = raw.strip().upper()
+    if not ticker:
+        return ""
+    return ticker if "." in ticker else f"{ticker}.US"
+
+
 def memo_absence_reason(conn: sqlite3.Connection, item: Idea) -> str | None:
     """Why this idea has no memo — from the audit trail, not a guess.
 

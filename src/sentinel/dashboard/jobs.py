@@ -32,7 +32,8 @@ from pathlib import Path
 #: The whole surface. A job is (argv suffix, human label); nothing else runs.
 COMMANDS: dict[str, list[str]] = {
     "ingest": ["ingest"],
-    "weekly": ["weekly"],
+    "brief": ["brief"],     # the SCORING run: pipeline over the universe + today's brief
+    "weekly": ["weekly"],   # the retrospective REVIEW: performance, evals, kill criteria
 }
 
 

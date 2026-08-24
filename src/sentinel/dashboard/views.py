@@ -270,6 +270,61 @@ def _record_trade_forms(st, ctx: Context) -> None:
                             )
 
 
+def _offer_fetch(st, ctx: Context, ticker: str) -> None:
+    """A ticker we hold nothing on. Say so, and offer to change that.
+
+    "SOFI returns nothing" was the report: search only listed what past
+    ingests happened to cover, and the page gave no path from "not here" to
+    "here". Fetching is a real ingest through the job runner (detached, one
+    at a time), never a quiet inline network call.
+    """
+    st.info(f"Nothing ingested for **{ticker}** yet — no prices, no "
+            f"fundamentals, no news.", icon="🔍")
+    if not ctx.writable:
+        st.caption(f"Fetch it with `sentinel ingest --tickers {ticker}` and reload.")
+        return
+    from . import jobs
+
+    current = jobs.running(ctx.db_path)
+    if current is not None:
+        st.caption(f"`{current.name}` is already running (started "
+                   f"{current.started_at}); one job at a time. Reload to check.")
+        return
+    left, right = st.columns(2, gap="medium")
+    with left:
+        if st.button(f"Fetch {ticker} now", key="fetch-any"):
+            _start_job(st, ctx, "ingest", ["--tickers", ticker, "--history", "600"])
+            st.caption("A single ticker takes well under a minute. Reload, then "
+                       "search it again.")
+    with right:
+        if st.button(f"Fetch AND score {ticker}", key="fetch-score-any"):
+            # brief ingests nothing, so this must be the scoring pass only
+            # after data exists — chain by running brief on next reload is
+            # more machinery than it is worth; score after the fetch lands.
+            _start_job(st, ctx, "ingest", ["--tickers", ticker, "--history", "600"])
+            st.caption("When the fetch finishes, come back and press "
+                       "“Score this ticker”.")
+
+
+def reports(st, ctx: Context) -> None:
+    st.markdown("### Reports")
+    st.markdown(
+        '<p class="sx-note">Every brief and weekly review the pipeline has written, '
+        'newest first — the same markdown `sentinel brief` and `sentinel weekly` '
+        'print to the terminal and save under <code>data/briefs</code>.</p>',
+        unsafe_allow_html=True,
+    )
+    files = queries.list_reports(ctx.config.paths.briefs)
+    if not files:
+        st.info("No reports yet. Run the brief or the weekly review — the "
+                "buttons are on the Data health page.", icon="📭")
+        return
+    names = {f.name: f for f in files}
+    chosen = st.selectbox("Report", list(names), index=0)
+    st.divider()
+    st.markdown(names[chosen].read_text(encoding="utf-8"))
+
+
 def risk(st, ctx: Context) -> None:
     st.markdown("### Risk")
     snapshot = queries.portfolio_snapshot(ctx.conn, ctx.config)
@@ -549,22 +604,27 @@ def _run_jobs_panel(st, ctx: Context) -> None:
             if st.button("Refresh status"):
                 st.rerun()
         else:
-            left, right = st.columns(2, gap="medium")
+            universes = sorted(ctx.config.universes) or ["core"]
+            universe = st.selectbox("Universe", universes,
+                                    index=universes.index("ai") if "ai" in universes else 0)
+            left, middle, right = st.columns(3, gap="medium")
             with left:
                 st.markdown("**Fetch latest data** — prices, fundamentals and "
-                            "news for one universe (`sentinel ingest`).")
-                universes = sorted(ctx.config.universes) or ["core"]
-                universe = st.selectbox("Universe", universes,
-                                        index=universes.index("ai") if "ai" in universes else 0)
+                            "news (`sentinel ingest`).")
                 history = st.number_input("Days of price history", min_value=30,
                                           max_value=2000, value=600, step=10)
                 if st.button("Run ingest"):
                     _start_job(st, ctx, "ingest",
                                ["--universe", universe, "--history", str(int(history))])
+            with middle:
+                st.markdown("**Score the universe** — every module per ticker, "
+                            "risk verdicts, and today's brief (`sentinel brief`). "
+                            "Calls the LLM: costs API credits and a few minutes.")
+                if st.button("Run brief"):
+                    _start_job(st, ctx, "brief", ["--universe", universe])
             with right:
-                st.markdown("**Run the weekly pipeline** — scores the pool and "
-                            "writes the brief (`sentinel weekly`). Calls the "
-                            "LLM: costs API credits and a few minutes.")
+                st.markdown("**Weekly review** — the retrospective: performance, "
+                            "evals, kill criteria (`sentinel weekly`). No LLM.")
                 if st.button("Run weekly"):
                     _start_job(st, ctx, "weekly", [])
 
@@ -657,11 +717,23 @@ def search(st, ctx: Context) -> None:
     )
 
     tickers = queries.searchable_tickers(ctx.conn)
-    if not tickers:
-        st.info("No ticker has price history yet. Run `sentinel ingest` first.", icon="📭")
-        return
 
-    ticker = st.selectbox("Ticker", tickers, key="search-ticker")
+    typed = st.text_input(
+        "Any ticker", key="search-any", placeholder="e.g. SOFI or VOD.LSE",
+        help="A bare symbol is read as a US listing (SOFI → SOFI.US). "
+             "Anything not yet ingested can be fetched from here.",
+    )
+    wanted = queries.normalize_ticker(typed)
+    if wanted and wanted not in tickers:
+        _offer_fetch(st, ctx, wanted)
+        return
+    if wanted:
+        ticker = wanted
+    else:
+        if not tickers:
+            st.info("No ticker has price history yet. Run `sentinel ingest` first.", icon="📭")
+            return
+        ticker = st.selectbox("Ingested tickers", tickers, key="search-ticker")
     if not ticker:
         return
 
@@ -680,6 +752,14 @@ def search(st, ctx: Context) -> None:
             f"{verdict.conviction} conviction"
             + (f" · {verdict.horizon_days}-day horizon" if verdict.horizon_days else "")
         )
+
+    if verdict.as_of is None and ctx.writable:
+        from . import jobs
+
+        if jobs.running(ctx.db_path) is None:
+            if st.button(f"Score {ticker} now (runs the pipeline + LLM on this one ticker)",
+                         key="score-any"):
+                _start_job(st, ctx, "brief", ["--tickers", ticker])
 
     if verdict.blockers:
         _section(st, "Why it is not a buy", "Every layer that refused it, and what it said.")
@@ -784,5 +864,5 @@ PAGES = [
     ("Ideas", ideas),
     ("Evals", evals),
     ("Data health", data_health),
-    ("Search", search),
+    ("Search", search), ("Reports", reports),
 ]

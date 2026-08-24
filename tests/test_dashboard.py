@@ -960,3 +960,33 @@ class TestMemoAbsenceReason:
     def test_no_failure_and_over_the_bar_means_no_key(self, conn):
         reason = queries.memo_absence_reason(conn, self._idea(70))
         assert "ANTHROPIC_API_KEY" in reason and "re-run" in reason
+
+
+class TestAnyTickerSearch:
+    """"SOFI doesn't return anything": search only listed tickers past ingests
+    happened to cover, with no path from 'not here' to 'here'."""
+
+    def test_a_bare_symbol_is_read_as_a_us_listing(self):
+        assert queries.normalize_ticker("sofi") == "SOFI.US"
+        assert queries.normalize_ticker(" SOFI ") == "SOFI.US"
+
+    def test_an_explicit_suffix_is_respected(self):
+        """Currency inference hangs off the suffix — force-appending .US to
+        VOD.LSE would price a GBP stock in dollars."""
+        assert queries.normalize_ticker("vod.lse") == "VOD.LSE"
+
+    def test_empty_input_stays_empty(self):
+        assert queries.normalize_ticker("   ") == ""
+
+
+class TestReportsListing:
+    def test_newest_first_and_markdown_only(self, tmp_path):
+        (tmp_path / "2026-08-20.md").write_text("old")
+        (tmp_path / "weekly-2026-08-24.md").write_text("newer")
+        (tmp_path / "2026-08-24.md").write_text("new")
+        (tmp_path / "readout-2026-08-24.html").write_text("<html>")
+        names = [p.name for p in queries.list_reports(tmp_path)]
+        assert names == ["weekly-2026-08-24.md", "2026-08-24.md", "2026-08-20.md"]
+
+    def test_a_missing_directory_is_empty_not_a_crash(self, tmp_path):
+        assert queries.list_reports(tmp_path / "nope") == []
