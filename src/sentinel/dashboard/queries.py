@@ -647,6 +647,39 @@ def conviction_board(
     return qualifying, near_miss
 
 
+def favourites_overview(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """One row per starred ticker: price, day move, and the latest verdict.
+
+    The watchlist table may not exist in a database created before it was
+    added — the dashboard connection is read-only and cannot migrate — so the
+    read degrades to empty rather than crashing the landing page.
+    """
+    try:
+        favourites = repo.list_favourites(conn)
+    except sqlite3.OperationalError:
+        return []
+    risk = risk_outcomes(conn)
+    rows: list[dict[str, Any]] = []
+    for ticker in favourites:
+        bars = repo.get_bars(conn, ticker)
+        last = _f(bars[-1].adjusted_close) if bars else None
+        move = (
+            (_f(bars[-1].adjusted_close) / _f(bars[-2].adjusted_close) - 1)
+            if len(bars) >= 2 and _f(bars[-2].adjusted_close) else None
+        )
+        idea_ = latest_idea_for(conn, ticker)
+        rows.append({
+            "ticker": ticker,
+            "last_close": last,
+            "change_1d": move,
+            "score": _f(idea_.composite_score) if idea_ else None,
+            "accepted": (idea_ is not None and not idea_.rejected_by_rules
+                         and risk.get(idea_.id) is True),
+            "has_data": bool(bars),
+        })
+    return rows
+
+
 def today_status(conn: sqlite3.Connection, briefs_dir: str | Path) -> dict[str, Any]:
     """Everything the Today page needs to say "here is where you are".
 

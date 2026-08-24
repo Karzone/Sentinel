@@ -88,15 +88,21 @@ def main() -> None:
     # The first page is the default and is served at "/". Giving it a url_path
     # as well makes that path a 404, and Streamlit's "page not found" modal then
     # sits over the whole app swallowing clicks.
-    pages = []
-    for index, (title, render) in enumerate(views.PAGES):
-        bound = _bind(render, ctx)
-        if index == 0:
-            pages.append(st.Page(bound, title=title, default=True))
-        else:
-            pages.append(st.Page(bound, title=title,
-                                 url_path=title.lower().replace(" ", "-")))
-    selected = st.navigation(pages, position="sidebar")
+    by_title = dict(views.PAGES)
+    grouped: dict[str, list] = {}
+    first = True
+    for group, titles in views.NAV_GROUPS.items():
+        entries = []
+        for title in titles:
+            bound = _bind(by_title[title], ctx)
+            if first:
+                entries.append(st.Page(bound, title=title, default=True))
+                first = False
+            else:
+                entries.append(st.Page(bound, title=title,
+                                       url_path=title.lower().replace(" ", "-")))
+        grouped[group] = entries
+    selected = st.navigation(grouped, position="sidebar")
 
     with st.sidebar:
         notice = st.session_state.get("_auth_notice")

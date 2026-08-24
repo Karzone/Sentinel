@@ -166,6 +166,11 @@ CREATE TABLE IF NOT EXISTS equity_curve (
 );
 
 -- ---------------------------------------------------------------- operations
+CREATE TABLE IF NOT EXISTS watchlist (
+    ticker      TEXT PRIMARY KEY,
+    added_at    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS quality_issues (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     as_of     TEXT NOT NULL,

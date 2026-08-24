@@ -1127,3 +1127,49 @@ class TestTodayStatus:
         assert status["positions_below_stop"] == 1, (
             "mark 50 under stop 60 is the brief's Action-needed case — the "
             "landing page must not show a calm zero")
+
+
+class TestFavourites:
+    """The watchlist behind "Your favourites" — stored in the database, so it
+    survives restarts and travels with the data."""
+
+    def test_add_list_remove_round_trip(self, conn):
+        repo.add_favourite(conn, "sofi.us")
+        repo.add_favourite(conn, "NVDA.US")
+        assert repo.list_favourites(conn) == ["NVDA.US", "SOFI.US"], (
+            "stored upper-cased and listed sorted")
+        repo.add_favourite(conn, "SOFI.US")  # starring twice is idempotent
+        assert len(repo.list_favourites(conn)) == 2
+        repo.remove_favourite(conn, "NVDA.US")
+        assert repo.list_favourites(conn) == ["SOFI.US"]
+
+    def test_overview_carries_price_move_and_score(self, conn):
+        from decimal import Decimal as D
+        from sentinel.domain.models import Bar
+
+        today = dt.date.today()
+        repo.add_favourite(conn, "A.US")
+        repo.save_bars(conn, [
+            Bar(ticker="A.US", date=today - dt.timedelta(days=1), open=D("100"),
+                high=D("100"), low=D("100"), close=D("100"),
+                adjusted_close=D("100"), volume=1, currency="USD"),
+            Bar(ticker="A.US", date=today, open=D("110"), high=D("110"),
+                low=D("110"), close=D("110"), adjusted_close=D("110"),
+                volume=1, currency="USD"),
+        ], source="t")
+        rows = queries.favourites_overview(conn)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["last_close"] == 110.0
+        assert abs(row["change_1d"] - 0.10) < 1e-9
+        assert row["score"] is None and row["accepted"] is False
+
+    def test_a_pre_watchlist_database_degrades_to_empty_not_a_crash(self, tmp_path):
+        """The dashboard connection is read-only and cannot migrate, so a
+        database created before the watchlist table must not take the landing
+        page down."""
+        import sqlite3 as s
+        old_db = tmp_path / "old.sqlite"
+        c = s.connect(old_db)
+        c.row_factory = s.Row
+        assert queries.favourites_overview(c) == []

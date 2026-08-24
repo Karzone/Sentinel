@@ -371,6 +371,23 @@ def high_water_mark(conn: sqlite3.Connection) -> Decimal | None:
 # ------------------------------------------------------------------ operations
 
 
+def add_favourite(conn: sqlite3.Connection, ticker: str) -> None:
+    conn.execute(
+        "INSERT INTO watchlist(ticker, added_at) VALUES(?, ?) "
+        "ON CONFLICT(ticker) DO NOTHING",
+        (ticker.upper(), _now()),
+    )
+
+
+def remove_favourite(conn: sqlite3.Connection, ticker: str) -> None:
+    conn.execute("DELETE FROM watchlist WHERE ticker = ?", (ticker.upper(),))
+
+
+def list_favourites(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute("SELECT ticker FROM watchlist ORDER BY ticker").fetchall()
+    return [r["ticker"] for r in rows]
+
+
 def save_quality_issues(conn: sqlite3.Connection, issues: Sequence[DataQualityIssue]) -> None:
     if not issues:
         return

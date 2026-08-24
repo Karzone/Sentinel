@@ -127,8 +127,36 @@ def today(st, ctx: Context) -> None:
                            if idea_.memo else "scored on the numbers only"),
                     mode=ctx.mode,
                 ), unsafe_allow_html=True)
-        st.caption("Full reasoning — thesis, risks, what would prove it wrong — "
-                   "is on the **Conviction** page.")
+                if st.button(f"Open {idea_.ticker}", key=f"today-idea-{idea_.id}"):
+                    st.session_state["today-open"] = idea_.ticker
+
+    st.divider()
+    _section(st, "Your favourites",
+             "Stocks you starred (the ☆ button on any stock's page). Price, "
+             "yesterday's move, and the app's latest score at a glance.")
+    favourites = queries.favourites_overview(ctx.conn)
+    if not favourites:
+        st.caption("Nothing starred yet. Open any stock — from the ideas above "
+                   "or the Search page — and press ☆ to track it here.")
+    else:
+        for row in favourites:
+            line = st.columns([2, 2, 2, 2, 2], gap="small")
+            line[0].markdown(f"**{row['ticker']}**")
+            line[1].markdown("—" if row["last_close"] is None
+                             else f"{row['last_close']:,.2f}")
+            line[2].markdown("—" if row["change_1d"] is None
+                             else f"{row['change_1d']:+.1%} today")
+            line[3].markdown(
+                "not scored yet" if row["score"] is None
+                else f"score {row['score']:.0f}"
+                     + (" · passed checks" if row["accepted"] else ""))
+            if line[4].button("Open", key=f"today-fav-{row['ticker']}"):
+                st.session_state["today-open"] = row["ticker"]
+
+    opened = st.session_state.get("today-open")
+    if opened:
+        st.divider()
+        _ticker_detail(st, ctx, opened)
 
     if ctx.writable:
         st.divider()
@@ -939,25 +967,114 @@ def search(st, ctx: Context) -> None:
 
     tickers = queries.searchable_tickers(ctx.conn)
 
-    typed = st.text_input(
-        "Any ticker", key="search-any", placeholder="e.g. SOFI or VOD.LSE",
-        help="A bare symbol is read as a US listing (SOFI → SOFI.US). "
-             "Anything not yet ingested can be fetched from here.",
-    )
-    wanted = queries.normalize_ticker(typed)
-    if wanted and wanted not in tickers:
-        _offer_fetch(st, ctx, wanted)
-        return
-    if wanted:
-        ticker = wanted
-    else:
-        if not tickers:
-            st.info("No ticker has price history yet. Run `sentinel ingest` first.", icon="📭")
+    # The selectbox IS the type-ahead: start typing and it filters. The
+    # free-text path exists only for symbols the app has never fetched.
+    ticker = None
+    if tickers:
+        ticker = st.selectbox(
+            "Start typing a ticker", [""] + tickers, index=0, key="search-ticker",
+            help="Suggestions come from every stock the app has data for.",
+        ) or None
+    with st.expander("Can't find it? Fetch a new stock",
+                     expanded=not tickers):
+        typed = st.text_input(
+            "Symbol", key="search-any", placeholder="e.g. SOFI or VOD.LSE",
+            help="A bare symbol is read as a US listing (SOFI becomes SOFI.US).",
+        )
+        wanted = queries.normalize_ticker(typed)
+        if wanted and wanted not in tickers:
+            _offer_fetch(st, ctx, wanted)
             return
-        ticker = st.selectbox("Ingested tickers", tickers, key="search-ticker")
+        if wanted:
+            ticker = wanted
     if not ticker:
+        st.caption("Pick a stock above — or fetch a new one — to see its "
+                   "statistics, chart, news and the app's verdict.")
         return
 
+    _ticker_detail(st, ctx, ticker)
+
+
+def _favourite_star(st, ctx: Context, ticker: str) -> None:
+    """Star / unstar. Favourites live in the database; the page's own
+    connection is read-only, so the toggle opens a write connection for the
+    one statement (and migrates first, so databases created before the
+    watchlist table gain it on first use)."""
+    if not ctx.writable:
+        return
+    import sqlite3
+
+    from ..storage import db as db_mod, repo as repo_mod
+
+    try:
+        starred = ticker in repo_mod.list_favourites(ctx.conn)
+    except sqlite3.OperationalError:
+        starred = False
+    label = f"★ Remove {ticker} from favourites" if starred else f"☆ Add {ticker} to favourites"
+    if st.button(label, key=f"fav-{ticker}"):
+        conn = db_mod.connect(str(ctx.db_path))
+        try:
+            db_mod.migrate(conn)
+            if starred:
+                repo_mod.remove_favourite(conn, ticker)
+            else:
+                repo_mod.add_favourite(conn, ticker)
+            conn.commit()
+        finally:
+            conn.close()
+        st.rerun()
+
+
+def _trade_plan(st, ctx: Context, ticker: str) -> None:
+    """Entry, stop-loss and take-profit levels IF the reader acts.
+
+    Levels, not predictions: the stop is the same ATR-based stop the risk
+    layer sizes with; the targets are the 1R/2R convention (one and two
+    times the risked amount above entry) — a discipline for taking profit,
+    not a forecast that the price will get there. Shown only for a scored,
+    accepted idea, because levels under an AVOID verdict would read as a
+    wink to ignore it.
+    """
+    from decimal import Decimal as D
+
+    from ..analysis import technical
+    from ..storage import repo as repo_mod
+
+    bars = repo_mod.get_bars(ctx.conn, ticker)
+    if not bars:
+        return
+    entry = bars[-1].adjusted_close
+    stop = technical.atr_stop(bars)
+    if stop is None or stop >= entry:
+        return
+    risk_per_share = entry - stop
+    budget = ctx.config.satellite_capital_gbp * ctx.config.risk.risk_per_trade_pct / D("100")
+    shares = int(budget / risk_per_share) if risk_per_share > 0 else 0
+
+    _section(st, "If you act on this",
+             "Levels, not predictions. The stop caps the loss; the targets are "
+             "the 1R/2R profit-taking convention — one and two times the risked "
+             "amount. Decide before you buy, not after.")
+    row = st.columns(4, gap="small")
+    for column, (label, value, note) in zip(row, [
+        ("Entry (last close)", f"{entry:,.2f}", bars[-1].currency),
+        ("Stop-loss", f"{stop:,.2f}", f"caps loss at {risk_per_share:,.2f}/share"),
+        ("Target 1R", f"{entry + risk_per_share:,.2f}", "consider taking some profit"),
+        ("Target 2R", f"{entry + 2 * risk_per_share:,.2f}", "consider taking the rest"),
+    ]):
+        with column:
+            st.markdown(ui.tile(label, value, delta=note, mode=ctx.mode),
+                        unsafe_allow_html=True)
+    if shares:
+        st.caption(
+            f"At your risk-per-trade setting "
+            f"({ctx.config.risk.risk_per_trade_pct}% of satellite = £{budget:,.0f}), "
+            f"that stop supports about **{shares} shares**. If you do trade it, "
+            f"record the fill on the Portfolio page so the app watches the stop for you."
+        )
+
+
+def _ticker_detail(st, ctx: Context, ticker: str) -> None:
     verdict = queries.verdict_for(ctx.conn, ticker)
     stats = queries.ticker_stats(ctx.conn, ticker)
 
@@ -993,6 +1110,11 @@ def search(st, ctx: Context) -> None:
         _section(st, "What would falsify this",
                  "An idea that cannot be wrong is not an idea.")
         st.markdown(verdict.falsifier)
+
+    _favourite_star(st, ctx, ticker)
+    if verdict.stance == "BUY":
+        st.divider()
+        _trade_plan(st, ctx, ticker)
 
     st.divider()
     _section(st, "Statistics",
@@ -1078,6 +1200,13 @@ def _stat_tiles(st, ctx: Context, stats: dict) -> None:
             st.markdown(ui.tile(label, value, delta=delta, delta_status=status,
                                 mode=ctx.mode), unsafe_allow_html=True)
 
+
+#: Sidebar grouping: the three pages a beginner lives in, then everything
+#: else under one label. PAGES stays flat for anything that iterates it.
+NAV_GROUPS = {
+    "Every day": ["Today", "Search", "Portfolio"],
+    "Under the hood": ["Conviction", "Risk", "Ideas", "Evals", "Data health", "Reports"],
+}
 
 PAGES = [
     ("Today", today),
