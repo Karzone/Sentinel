@@ -241,7 +241,14 @@ Recorded so the gaps are known rather than discovered.
   never a command line. Same `ctx.writable` gate as Record-a-trade (local + non-demo).
   The Search page plots golden/death crosses on the price chart (deterministic trend events, not
   advice — the verdict banner stays the system's opinion) and shows the stored news headlines the
-  sentiment module scored, which were previously captured and shown to nobody.
+  sentiment module scored, which were previously captured and shown to nobody. The stock detail's
+  price section is a two-way toggle: daily candlesticks (~6 months of raw OHLC prints, direction
+  coloured with the validated diverging pair rather than green/red, 20/50-day averages overlaid,
+  volume in the tooltip only — never a second axis) or the adjusted-close trend view with the
+  50/200-day averages and cross markers. The Today page leads with a top-five leaderboard of
+  accepted ideas (`score_leaders`): same rules-AND-risk gate as the Conviction board via
+  `top_ideas_frame`, one hue on a full 0–100 scale, with a reference rule at the digest's
+  notable-70 bar.
 - **Alpaca paper API.** The internal simulated ledger covers both UK and US names; the Alpaca
   integration the spec mentions for US names is not wired.
 - **Reddit / StockTwits sentiment.** The sentiment module accepts arbitrary text via `extra_texts`,

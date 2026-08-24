@@ -1185,3 +1185,142 @@ class TestCompanyName:
             company_name="Arista Networks", revenue_ttm=D("1"))], source="t")
         assert queries.company_name(conn, "ANET.US") == "Arista Networks"
         assert queries.company_name(conn, "NOPE.US") is None
+
+
+class TestCandlestick:
+    """The candle view: real OHLC geometry, CVD-safe direction colours, one
+    y-axis, and the honest empty state."""
+
+    def _frame(self, days=30):
+        start = dt.date(2026, 6, 1)
+        rows = []
+        for i in range(days):
+            base = 100 + i * 0.5
+            rows.append({"date": start + dt.timedelta(days=i),
+                         "open": base, "high": base + 2, "low": base - 2,
+                         "close": base + (1 if i % 2 == 0 else -1),
+                         "volume": 1_000 + i})
+        return pd.DataFrame(rows)
+
+    def test_wicks_span_low_to_high_and_bodies_open_to_close(self):
+        spec = charts.candlestick(self._frame(), "light").to_dict()
+        layers = spec["layer"]
+        wick, body = layers[0], layers[1]
+        assert wick["mark"]["type"] == "rule"
+        assert wick["encoding"]["y"]["field"] == "low"
+        assert wick["encoding"]["y2"]["field"] == "high"
+        assert body["mark"]["type"] == "bar"
+        assert body["encoding"]["y"]["field"] == "open"
+        assert body["encoding"]["y2"]["field"] == "close"
+
+    def test_direction_wears_the_diverging_poles_not_green_red(self):
+        """Up/down is polarity, and green/red is the classic CVD trap — the
+        bodies must take the validated diverging pair instead."""
+        p = pal.get("light")
+        spec = charts.candlestick(self._frame(), "light").to_dict()
+        body_scale = spec["layer"][1]["encoding"]["color"]["scale"]
+        assert set(body_scale["range"]) == {p.diverging[0], p.diverging[2]}
+
+    def test_the_averages_derive_from_the_close_so_one_axis_holds(self):
+        frame = self._frame(days=60)
+        spec = charts.candlestick(frame, "light", sma=(20, 50)).to_dict()
+        lines = spec["layer"][2]
+        assert lines["mark"]["type"] == "line"
+        domain = lines["encoding"]["color"]["scale"]["domain"]
+        assert domain == ["SMA 20", "SMA 50"]
+        # Independent scales: the SMA legend must not swallow the candle
+        # direction encoding, nor repaint candles with series hues.
+        assert spec["resolve"]["scale"]["color"] == "independent"
+
+    def test_volume_rides_the_tooltip_never_a_second_axis(self):
+        spec = charts.candlestick(self._frame(), "light").to_dict()
+        tips = {t["field"] for t in spec["layer"][1]["encoding"]["tooltip"]}
+        assert "volume" in tips
+        for layer in spec["layer"]:
+            enc = layer.get("encoding", {})
+            assert enc.get("y", {}).get("field") != "volume"
+
+    def test_empty_history_renders_the_reason(self):
+        spec = charts.candlestick(pd.DataFrame(), "light").to_dict()
+        assert spec["mark"]["type"] == "text"
+
+
+class TestScoreLeaders:
+    """The Today leaderboard: magnitude on one hue, sorted best first, with
+    the notable-70 rule the digest already uses."""
+
+    def _frame(self):
+        return pd.DataFrame([
+            {"ticker": "B.US", "name": "Bravo", "score": 92.0,
+             "conviction": "high", "as_of": dt.date(2026, 8, 21)},
+            {"ticker": "A.US", "name": "Alpha", "score": 81.0,
+             "conviction": "medium", "as_of": dt.date(2026, 8, 21)},
+            {"ticker": "C.US", "name": "Charlie", "score": 64.0,
+             "conviction": "low", "as_of": dt.date(2026, 8, 21)},
+        ])
+
+    def test_sorted_best_first_on_a_full_0_100_scale(self):
+        spec = charts.score_leaders(self._frame(), "light").to_dict()
+        bars = spec["layer"][0]
+        assert bars["encoding"]["y"]["sort"] == ["B.US", "A.US", "C.US"]
+        assert bars["encoding"]["x"]["scale"]["domain"] == [0, 100]
+
+    def test_one_hue_not_categorical(self):
+        """One measure on one scale: identity is the y label's job, so a
+        per-ticker hue would burn the colour channel restating it."""
+        spec = charts.score_leaders(self._frame(), "light").to_dict()
+        assert "color" not in spec["layer"][0]["encoding"]
+        assert spec["layer"][0]["mark"]["color"] == pal.get("light").slot(0)
+
+    def test_carries_the_notable_bar_as_a_rule(self):
+        spec = charts.score_leaders(self._frame(), "light", bar=70).to_dict()
+        rules = [l for l in spec["layer"] if l["mark"].get("type") == "rule"]
+        assert rules and rules[0]["encoding"]["x"]["field"] == "bar"
+        assert any(rows == [{"bar": 70}] for rows in spec["datasets"].values())
+
+    def test_the_tooltip_names_the_company(self):
+        spec = charts.score_leaders(self._frame(), "light").to_dict()
+        tips = {t["field"] for t in spec["layer"][0]["encoding"]["tooltip"]}
+        assert {"name", "score", "conviction"} <= tips
+
+    def test_empty_says_what_to_do(self):
+        spec = charts.score_leaders(pd.DataFrame(), "light").to_dict()
+        assert spec["mark"]["type"] == "text"
+
+
+class TestOhlcAndLeaderQueries:
+    def test_ohlc_frame_carries_the_raw_prints(self, populated):
+        frame = queries.ohlc_frame(populated, "DEMO1.LSE", days=30)
+        assert list(frame.columns) == ["date", "open", "high", "low", "close", "volume"]
+        assert len(frame) == 30
+        assert (frame["high"] >= frame["low"]).all()
+
+    def test_ohlc_frame_is_empty_with_named_columns_for_a_stranger(self, conn):
+        frame = queries.ohlc_frame(conn, "NOPE.US")
+        assert frame.empty and "open" in frame.columns
+
+    def test_top_ideas_frame_is_the_conviction_board_in_miniature(self, conn):
+        """Same gate as the board: an unapproved 95 must not lead the Today
+        chart that an approved 85 earned."""
+        helper = TestConvictionBoard()
+        strong_unapproved = helper._idea("X.US", 95)
+        approved = helper._idea("Y.US", 85)
+        for idea in (strong_unapproved, approved):
+            repo.save_idea(conn, idea)
+        helper._approve(conn, approved)
+
+        frame = queries.top_ideas_frame(conn, limit=5)
+        assert frame["ticker"].tolist() == ["Y.US"]
+        assert frame["score"].iloc[0] == 85.0
+        # Name falls back to the ticker when fundamentals never carried one.
+        assert frame["name"].iloc[0] == "Y.US"
+
+    def test_top_ideas_frame_caps_at_the_limit_best_first(self, conn):
+        helper = TestConvictionBoard()
+        for ticker, score in (("A.US", 61), ("B.US", 92), ("C.US", 85),
+                              ("D.US", 70), ("E.US", 66), ("F.US", 88)):
+            idea = helper._idea(ticker, score)
+            repo.save_idea(conn, idea)
+            helper._approve(conn, idea)
+        frame = queries.top_ideas_frame(conn, limit=5)
+        assert frame["ticker"].tolist() == ["B.US", "F.US", "C.US", "D.US", "E.US"]

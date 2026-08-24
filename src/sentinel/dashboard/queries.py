@@ -617,6 +617,43 @@ def price_frame(conn: sqlite3.Connection, ticker: str, *, days: int = 365) -> pd
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["date", "close", "volume"])
 
 
+def ohlc_frame(conn: sqlite3.Connection, ticker: str, *, days: int = 130) -> pd.DataFrame:
+    """Raw OHLCV for the candlestick view — the actual daily prints, where
+    `price_frame` carries the adjusted close. A candle drawn from adjusted
+    values would mix open/high/low from one series with a close from another,
+    so the raw prints are the only coherent choice here."""
+    bars = repo.get_bars(conn, ticker)
+    rows = [
+        {"date": b.date, "open": _f(b.open), "high": _f(b.high), "low": _f(b.low),
+         "close": _f(b.close), "volume": int(b.volume or 0)}
+        for b in bars[-days:]
+    ]
+    columns = ["date", "open", "high", "low", "close", "volume"]
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=columns)
+
+
+def top_ideas_frame(conn: sqlite3.Connection, *, limit: int = 5) -> pd.DataFrame:
+    """The Today page's leaderboard: the strongest ACCEPTED ideas, best first.
+
+    Built on `conviction_board` rather than a fresh query, so the leaderboard
+    can never show a ticker the Conviction page would refuse — same
+    rules-AND-risk gate, same latest-per-ticker collapse.
+    """
+    qualifying, _ = conviction_board(conn, min_score=0)
+    rows = [
+        {
+            "ticker": i.ticker,
+            "name": company_name(conn, i.ticker) or i.ticker,
+            "score": _f(i.composite_score),
+            "conviction": i.conviction.value,
+            "as_of": i.as_of,
+        }
+        for i in qualifying[:limit]
+    ]
+    columns = ["ticker", "name", "score", "conviction", "as_of"]
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=columns)
+
+
 def conviction_board(
     conn: sqlite3.Connection, *, min_score: int = 80, days: int = 14
 ) -> tuple[list[Idea], Idea | None]:

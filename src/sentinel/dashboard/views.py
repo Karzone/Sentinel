@@ -110,24 +110,31 @@ def today(st, ctx: Context) -> None:
 
     st.divider()
     _section(st, "Best current ideas",
-             "The system's strongest cases that passed every safety check. "
-             "The score is out of 100 — how much the evidence agrees. Click "
-             "through for the full reasoning; nothing here is advice.")
+             "The top five that passed every safety check, strongest first. "
+             "The score is out of 100 — how much the evidence agrees; 70 is "
+             "the bar the daily report calls notable. Open a name for the "
+             "full reasoning; nothing here is advice.")
     qualifying, _ = queries.conviction_board(ctx.conn, min_score=0)
     if not qualifying:
         st.info("No scored ideas yet. Fetch data and run the report below — "
                 "then the best ideas appear here.", icon="🌱")
     else:
-        cards = st.columns(min(3, len(qualifying[:3])), gap="medium")
-        for index, idea_ in enumerate(qualifying[:3]):
-            with cards[index]:
-                st.markdown(ui.tile(
-                    idea_.ticker, f"{idea_.composite_score:.0f}",
-                    delta=(idea_.memo.thesis.split(". ")[0][:90] + "…"
-                           if idea_.memo else "scored on the numbers only"),
-                    mode=ctx.mode,
-                ), unsafe_allow_html=True)
-                if st.button(f"Open {idea_.ticker}", key=f"today-idea-{idea_.id}"):
+        top = qualifying[:5]
+        leaders = queries.top_ideas_frame(ctx.conn, limit=5)
+        chart_col, list_col = st.columns([3, 2], gap="large")
+        with chart_col:
+            _chart(st, charts.score_leaders(leaders, ctx.mode), key="today-top5")
+        with list_col:
+            for idea_ in top:
+                line = st.columns([3, 1], gap="small")
+                name = queries.company_name(ctx.conn, idea_.ticker)
+                line[0].markdown(
+                    f"**{name or idea_.ticker}**  \n"
+                    f"<span style='opacity:.6'>{idea_.ticker} · "
+                    f"{idea_.composite_score:.0f}/100 · "
+                    f"{idea_.conviction.value} conviction</span>",
+                    unsafe_allow_html=True)
+                if line[1].button("Open", key=f"today-idea-{idea_.id}"):
                     st.session_state["today-open"] = idea_.ticker
 
     st.divider()
@@ -1128,15 +1135,32 @@ def _ticker_detail(st, ctx: Context, ticker: str) -> None:
     _stat_tiles(st, ctx, stats)
 
     st.divider()
-    _section(st, "Price",
-             "Adjusted close with the 50 and 200-day moving averages. Triangles mark "
-             "golden/death crosses — trend events the technical module also sees, "
-             "not buy/sell advice; the verdict above is the system's actual opinion.")
-    prices = queries.price_frame(ctx.conn, ticker)
-    _chart(st, charts.price_history(prices, ctx.mode,
-                                    crosses=queries.sma_crosses(prices)),
-           key=f"price-{ticker}")
-    _table_twin(st, prices.tail(60))
+    style = st.radio(
+        "Price chart", ["Daily candles (6 months)", "Trend lines (1 year)"],
+        horizontal=True, key=f"chart-style-{ticker}",
+        help="Candles show each day's open, high, low and close; trend lines "
+             "show the adjusted close against the long moving averages.",
+    )
+    if style.startswith("Daily candles"):
+        _section(st, "Price — daily candles",
+                 "Each candle is one trading day: the body runs open→close "
+                 "(blue closed higher, red closed lower), the thin wick spans "
+                 "the day's low→high. The lines are the 20 and 50-day "
+                 "averages — price above a rising average is trend support, "
+                 "not a promise. Hover a candle for its exact numbers.")
+        ohlc = queries.ohlc_frame(ctx.conn, ticker)
+        _chart(st, charts.candlestick(ohlc, ctx.mode), key=f"candles-{ticker}")
+        _table_twin(st, ohlc.tail(60))
+    else:
+        _section(st, "Price — trend",
+                 "Adjusted close with the 50 and 200-day moving averages. Triangles mark "
+                 "golden/death crosses — trend events the technical module also sees, "
+                 "not buy/sell advice; the verdict above is the system's actual opinion.")
+        prices = queries.price_frame(ctx.conn, ticker)
+        _chart(st, charts.price_history(prices, ctx.mode,
+                                        crosses=queries.sma_crosses(prices)),
+               key=f"price-{ticker}")
+        _table_twin(st, prices.tail(60))
 
     news = queries.news_frame(ctx.conn, ticker)
     st.divider()

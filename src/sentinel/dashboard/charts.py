@@ -502,6 +502,138 @@ def sparkline(frame: pd.DataFrame, mode: str, *, y: str = "nav", height: int = 4
         .properties(height=height, width="container")
     )
 
+def score_leaders(
+    frame: pd.DataFrame, mode: str, *, bar: int = 70,
+) -> alt.LayerChart | alt.Chart:
+    """The Today leaderboard: top accepted ideas by composite score.
+
+    One measure on one 0–100 scale, so one hue — not per-entity categorical,
+    which would spend the identity channel restating what the y-axis labels
+    already say. The reference rule at `bar` is the same 70 the digest and the
+    Conviction page treat as notable, so "how close is #4 to mattering" is
+    readable without a number in hand.
+    """
+    if frame.empty:
+        return _empty("No accepted ideas yet.\nRun the report to score the universe.",
+                      mode)
+
+    p = _p(mode)
+    order = frame.sort_values("score", ascending=False)["ticker"].tolist()
+    bars = (
+        alt.Chart(frame)
+        .mark_bar(cornerRadiusEnd=pal.BAR_CORNER_RADIUS, height=pal.BAR_MAX_WIDTH,
+                  color=p.slot(0))
+        .encode(
+            y=alt.Y("ticker:N", title=None, sort=order),
+            x=alt.X("score:Q", title="Composite score",
+                    scale=alt.Scale(domain=[0, 100]),
+                    axis=alt.Axis(values=[0, 25, 50, 70, 100], format="d")),
+            tooltip=[alt.Tooltip("name:N", title="Company"),
+                     alt.Tooltip("ticker:N", title="Ticker"),
+                     alt.Tooltip("score:Q", title="Score", format=".0f"),
+                     alt.Tooltip("conviction:N", title="Conviction"),
+                     alt.Tooltip("as_of:T", title="Scored", format="%d %b %Y")],
+        )
+    )
+    labels = (
+        alt.Chart(frame)
+        .mark_text(align="left", dx=6, fontSize=11, font=pal.FONT, color=p.ink_secondary)
+        .encode(y=alt.Y("ticker:N", sort=order), x="score:Q",
+                text=alt.Text("score:Q", format=".0f"))
+    )
+    # No in-plot text for the rule: any y position lands on some bar row in a
+    # chart this dense. The axis carries an explicit tick at the bar value and
+    # the page's subtitle says what 70 means, so the rule stays self-labelled.
+    threshold = pd.DataFrame([{"bar": bar}])
+    rule = alt.Chart(threshold).mark_rule(color=p.axis, strokeWidth=1).encode(x="bar:Q")
+    return alt.layer(bars, labels, rule).properties(
+        height=_row_height(len(frame)), width="container"
+    )
+
+
+def candlestick(
+    frame: pd.DataFrame, mode: str, *, height: int = DEFAULT_HEIGHT,
+    sma: Sequence[int] = (20, 50),
+) -> alt.LayerChart | alt.Chart:
+    """Daily candles with short moving averages.
+
+    Direction is polarity, so the bodies wear the diverging poles — blue for a
+    day that closed higher, red for lower — rather than the green/red
+    convention, which is the classic red-green CVD trap. The page's caption
+    spells the mapping out, because a colour never carries meaning alone.
+
+    Still one y-axis: the averages derive from the same close series the
+    candles carry, and volume stays off the chart for the same reason it is
+    absent from `price_history` — it belongs to a different scale, and a
+    second axis is the one thing this codebase never draws. Volume rides in
+    the tooltip instead.
+    """
+    if frame.empty:
+        return _empty("No price history for this ticker.", mode)
+
+    p = _p(mode)
+    up_colour, _mid, down_colour = p.diverging
+    data = frame.copy()
+    for window in sma:
+        data[f"SMA {window}"] = data["close"].rolling(window).mean()
+
+    direction = alt.Color(
+        "up:N",
+        scale=alt.Scale(domain=[True, False], range=[up_colour, down_colour]),
+        legend=None,
+    )
+    data["up"] = data["close"] >= data["open"]
+    # A T-scale spaces candles by calendar time, so the body width has to fit
+    # the densest stretch: weekdays, ~5 trading days a week.
+    body_width = max(2.0, min(9.0, 640 / max(len(data), 1) * (5 / 7) * 0.75))
+    x = alt.X("date:T", title=None, axis=alt.Axis(format="%d %b", labelAngle=0))
+
+    wicks = (
+        alt.Chart(data)
+        .mark_rule(strokeWidth=1)
+        .encode(x=x, y=alt.Y("low:Q", title=None, scale=alt.Scale(zero=False, nice=True)),
+                y2="high:Q", color=direction)
+    )
+    bodies = (
+        alt.Chart(data)
+        .mark_bar(size=body_width)
+        .encode(
+            x=x, y=alt.Y("open:Q", scale=alt.Scale(zero=False, nice=True)),
+            y2="close:Q", color=direction,
+            tooltip=[alt.Tooltip("date:T", title="Date", format="%d %b %Y"),
+                     alt.Tooltip("open:Q", title="Open", format=",.2f"),
+                     alt.Tooltip("high:Q", title="High", format=",.2f"),
+                     alt.Tooltip("low:Q", title="Low", format=",.2f"),
+                     alt.Tooltip("close:Q", title="Close", format=",.2f"),
+                     alt.Tooltip("volume:Q", title="Volume", format=",d")],
+        )
+    )
+    averages = (
+        alt.Chart(
+            data.melt(id_vars="date", value_vars=[f"SMA {w}" for w in sma],
+                      var_name="series", value_name="value").dropna(subset=["value"])
+        )
+        .mark_line(strokeWidth=1.4, interpolate="monotone")
+        .encode(
+            x=alt.X("date:T", title=None), y=alt.Y("value:Q", scale=alt.Scale(zero=False)),
+            color=alt.Color(
+                "series:N",
+                scale=alt.Scale(domain=[f"SMA {w}" for w in sma],
+                                range=[p.series[3], p.ink_muted][:len(sma)]),
+                legend=alt.Legend(title=None, orient="bottom", symbolType="stroke"),
+            ),
+        )
+    )
+    # Candle direction and the SMA legend are different encodings, not one
+    # series scale — left shared, the legend would swallow True/False and the
+    # candles would repaint with series hues.
+    return (
+        alt.layer(wicks, bodies, averages)
+        .resolve_scale(color="independent")
+        .properties(height=height, width="container")
+    )
+
+
 def price_history(
     frame: pd.DataFrame, mode: str, *, height: int = DEFAULT_HEIGHT,
     crosses: pd.DataFrame | None = None,
