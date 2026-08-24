@@ -40,6 +40,17 @@ class Context:
     writable: bool = False
 
 
+#: Candle-window choices on the stock detail page, in trading days. There is
+#: no intraday feed — "zoom in" means fewer daily candles drawn bigger, and
+#: the shortest window here is the honest ceiling on that.
+CANDLE_WINDOWS: dict[str, int] = {
+    "1 month": 22, "3 months": 66, "6 months": 130,
+}
+#: The detail page's price charts run taller than the default dashboard
+#: chart: they are the page's centrepiece, not a panel in a grid.
+DETAIL_CHART_HEIGHT = 380
+
+
 def _chart(st, chart, *, key: str | None = None) -> None:
     # theme=None matters: Streamlit's own Altair theme would otherwise override
     # the validated palette registered in palette.py.
@@ -1290,12 +1301,19 @@ def _ticker_detail(st, ctx: Context, ticker: str) -> None:
 
     st.divider()
     style = st.radio(
-        "Price chart", ["Daily candles (6 months)", "Trend lines (1 year)"],
+        "Price chart", ["Daily candles", "Trend lines (1 year)"],
         horizontal=True, key=f"chart-style-{ticker}",
         help="Candles show each day's open, high, low and close; trend lines "
              "show the adjusted close against the long moving averages.",
     )
     if style.startswith("Daily candles"):
+        window = st.radio(
+            "Window", list(CANDLE_WINDOWS), index=1, horizontal=True,
+            key=f"candle-window-{ticker}",
+            help="How far back the candles go. Shorter windows draw bigger "
+                 "candles — the data is daily either way; there is no "
+                 "intraday feed.",
+        )
         subtitle = ("Each candle is one trading day: the body runs open→close "
                     "(blue closed higher, red closed lower), the thin wick spans "
                     "the day's low→high. The lines are the 20 and 50-day "
@@ -1313,9 +1331,14 @@ def _ticker_detail(st, ctx: Context, ticker: str) -> None:
         # The identity rides ON the chart: a scroll position (or screenshot)
         # that has lost the page header must still say whose candles these are.
         chart_title = f"{name} ({ticker})" if name else ticker
-        ohlc = queries.ohlc_frame(ctx.conn, ticker)
+        # +50 rows of lookback (the longest SMA) so the averages are fully
+        # formed from the first displayed candle; the chart cuts the display
+        # back down after computing them.
+        ohlc = queries.ohlc_frame(ctx.conn, ticker,
+                                  days=CANDLE_WINDOWS[window] + 50)
         _chart(st, charts.candlestick(
-            ohlc, ctx.mode, title=chart_title,
+            ohlc, ctx.mode, title=chart_title, height=DETAIL_CHART_HEIGHT,
+            display_days=CANDLE_WINDOWS[window],
             levels=_levels_frame(levels) if levels is not None else None,
         ), key=f"candles-{ticker}")
         _table_twin(st, ohlc.tail(60))
@@ -1327,6 +1350,7 @@ def _ticker_detail(st, ctx: Context, ticker: str) -> None:
         chart_title = f"{name} ({ticker})" if name else ticker
         prices = queries.price_frame(ctx.conn, ticker)
         _chart(st, charts.price_history(prices, ctx.mode, title=chart_title,
+                                        height=DETAIL_CHART_HEIGHT,
                                         crosses=queries.sma_crosses(prices)),
                key=f"price-{ticker}")
         _table_twin(st, prices.tail(60))

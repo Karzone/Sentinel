@@ -1509,3 +1509,39 @@ class TestJobStartRerunsIntoTheLivePanel:
         views._running_job_panel(st, self._ctx(tmp_path), key="t")
         assert len([s for s in st.successes if "Started" in s]) == 1, (
             "the note replayed on a later render instead of being consumed")
+
+
+class TestCandleWindow:
+    """"still no 24 hour chart": there is no intraday feed, so zooming in
+    means fewer daily candles drawn bigger. The window control feeds
+    ohlc_frame(days=...) and the body-width cap must let a short window
+    actually look bigger."""
+
+    def test_a_short_window_draws_chunkier_candles(self):
+        month = charts.candlestick(TestCandlestick()._frame(days=22),
+                                   "light").to_dict()
+        half_year = charts.candlestick(TestCandlestick()._frame(days=130),
+                                       "light").to_dict()
+        month_size = month["layer"][1]["mark"]["size"]
+        assert month_size > 9, ("the old 9px cap kept one-month candles as "
+                                "thin as six-month ones")
+        assert month_size > half_year["layer"][1]["mark"]["size"]
+
+    def test_the_windows_are_trading_day_counts_and_the_chart_is_taller(self):
+        assert list(views.CANDLE_WINDOWS.values()) == [22, 66, 130]
+        assert views.DETAIL_CHART_HEIGHT >= 340
+
+    def test_the_averages_are_computed_before_the_display_cut(self):
+        """Cut first and a 1-month window shows its 20-day average on the
+        last two candles only, and the 50-day never — exactly what the
+        first live screenshot showed."""
+        spec = charts.candlestick(TestCandlestick()._frame(days=90), "light",
+                                  display_days=22).to_dict()
+        rows_by_shape = list(spec["datasets"].values())
+        bodies = next(r for r in rows_by_shape if "open" in r[0])
+        assert len(bodies) == 22, "the display cut did not happen"
+        melted = next(r for r in rows_by_shape if "series" in r[0])
+        sma20 = [r for r in melted if r["series"] == "SMA 20"]
+        sma50 = [r for r in melted if r["series"] == "SMA 50"]
+        assert len(sma20) == 22, "SMA 20 should cover every displayed candle"
+        assert len(sma50) == 22, "SMA 50 should cover every displayed candle"

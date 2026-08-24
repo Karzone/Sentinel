@@ -554,7 +554,7 @@ def score_leaders(
 def candlestick(
     frame: pd.DataFrame, mode: str, *, height: int = DEFAULT_HEIGHT,
     sma: Sequence[int] = (20, 50), levels: pd.DataFrame | None = None,
-    title: str | None = None,
+    title: str | None = None, display_days: int | None = None,
 ) -> alt.LayerChart | alt.Chart:
     """Daily candles with short moving averages.
 
@@ -577,6 +577,13 @@ def candlestick(
     data = frame.copy()
     for window in sma:
         data[f"SMA {window}"] = data["close"].rolling(window).mean()
+    if display_days is not None and len(data) > display_days:
+        # The averages are computed over the FULL frame before the cut, so a
+        # short window opens with fully-formed lines. Trimming first would
+        # spend the window on the rolling warm-up: a 1-month view would show
+        # its 20-day average only on the last two candles, and its 50-day
+        # average never.
+        data = data.tail(display_days).reset_index(drop=True)
 
     direction = alt.Color(
         "up:N",
@@ -585,8 +592,10 @@ def candlestick(
     )
     data["up"] = data["close"] >= data["open"]
     # A T-scale spaces candles by calendar time, so the body width has to fit
-    # the densest stretch: weekdays, ~5 trading days a week.
-    body_width = max(2.0, min(9.0, 640 / max(len(data), 1) * (5 / 7) * 0.75))
+    # the densest stretch: weekdays, ~5 trading days a week. The 5/7 * 0.75
+    # factor IS the overlap guard at the 640px basis; the pixel cap above it
+    # is aesthetic — high enough that a one-month window reads chunky.
+    body_width = max(2.0, min(16.0, 640 / max(len(data), 1) * (5 / 7) * 0.75))
     x = alt.X("date:T", title=None, axis=alt.Axis(format="%d %b", labelAngle=0))
 
     wicks = (

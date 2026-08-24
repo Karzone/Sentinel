@@ -253,10 +253,16 @@ Recorded so the gaps are known rather than discovered.
   The Search page plots golden/death crosses on the price chart (deterministic trend events, not
   advice — the verdict banner stays the system's opinion) and shows the stored news headlines the
   sentiment module scored, which were previously captured and shown to nobody. The stock detail's
-  price section is a two-way toggle: daily candlesticks (~6 months of raw OHLC prints, direction
-  coloured with the validated diverging pair rather than green/red, 20/50-day averages overlaid,
-  volume in the tooltip only — never a second axis) or the adjusted-close trend view with the
-  50/200-day averages and cross markers. The Today page leads with a top-five leaderboard of
+  price section is a two-way toggle: daily candlesticks (raw OHLC prints, direction coloured
+  with the validated diverging pair rather than green/red, 20/50-day averages overlaid, volume
+  in the tooltip only — never a second axis) or the adjusted-close trend view with the
+  50/200-day averages and cross markers. The candles carry a 1/3/6-month window control
+  (`CANDLE_WINDOWS`, trading days): there is no intraday feed, so "zoom in" means fewer daily
+  candles drawn bigger — the body-width pixel cap is 16 so a one-month window actually reads
+  bigger, and the frame is fetched with +50 rows of lookback so the averages are computed
+  BEFORE the display cut (cut first and a 1-month window shows its 20-day average on the last
+  two candles only, its 50-day never). Both detail charts run at `DETAIL_CHART_HEIGHT`, taller
+  than the dashboard default. The Today page leads with a top-five leaderboard of
   accepted ideas (`score_leaders`): same rules-AND-risk gate as the Conviction board via
   `top_ideas_frame`, one hue on a full 0–100 scale, with a reference rule at the digest's
   notable-70 bar. Search accepts company names as well as tickers: known stocks are
