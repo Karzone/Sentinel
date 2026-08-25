@@ -126,25 +126,51 @@ def today(st, ctx: Context) -> None:
             mode=ctx.mode,
         ), unsafe_allow_html=True)
     with row[2]:
-        trouble = status["positions_below_stop"]
         # The stop-watch: a DELAYED (~15 min) price against each stop, for
         # open positions only. Display-only — scores stay on the close (see
         # stopwatch.py). It degrades to the EOD message on any failure.
-        live = (stopwatch.check(queries.positions_frame(ctx.conn))
-                if status["open_positions"] else [])
-        if live:
-            names = ", ".join(b.ticker for b in live)
-            delta = f"{names} trading below its stop right now (delayed ~15 min)"
-        elif trouble:
-            delta = f"{trouble} below its stop — see Portfolio"
+        def positions_tile() -> None:
+            # Fragment-safe: a fragment tick runs on its own thread and the
+            # page's sqlite connection is thread-bound, so the tile opens a
+            # fresh read-only one per render (same reason the job panel
+            # re-reads from ctx.db_path rather than closing over ctx.conn).
+            conn = queries.read_only_connect(ctx.db_path)
+            try:
+                positions = queries.positions_frame(conn)
+                open_count = 0 if positions.empty else len(positions)
+                trouble = 0
+                if open_count:
+                    # Mirrors today_status's "below its stop" (EOD mark).
+                    below = positions["mark"] <= positions["stop"]
+                    trouble = int(below.fillna(False).sum())
+                live = stopwatch.check(positions) if open_count else []
+            finally:
+                conn.close()
+            if live:
+                names = ", ".join(b.ticker for b in live)
+                delta = (f"{names} trading below its stop right now "
+                         "(delayed ~15 min)")
+            elif trouble:
+                delta = f"{trouble} below its stop — see Portfolio"
+            else:
+                delta = ("all above their stops" if open_count
+                         else "none recorded yet")
+            st.markdown(ui.tile(
+                "Your positions", str(open_count),
+                delta=delta,
+                delta_status="critical" if (live or trouble) else None,
+                mode=ctx.mode,
+            ), unsafe_allow_html=True)
+
+        # Self-refresh only when it can learn something: a vendor key is
+        # present and there is a position to watch. The 60s tick re-renders;
+        # the vendor is only re-asked when the 5-minute quote cache expires.
+        fragment = getattr(st, "fragment", None)
+        if (fragment is not None and status["open_positions"]
+                and stopwatch.armed()):
+            fragment(run_every="60s")(positions_tile)()
         else:
-            delta = ("all above their stops" if status["open_positions"]
-                     else "none recorded yet")
-        st.markdown(ui.tile(
-            "Your positions", str(status["open_positions"]),
-            delta=delta,
-            delta_status="critical" if (live or trouble) else None, mode=ctx.mode,
-        ), unsafe_allow_html=True)
+            positions_tile()
 
     st.divider()
     _section(st, "Best current ideas",

@@ -323,6 +323,12 @@ Recorded so the gaps are known rather than discovered.
   from a vendor chain — EODHD `real-time/` first (403s on the owner's current plan, measured
   2026-08-25), then Finnhub's free `/quote` (US symbols, keyed back by the original ticker) —
   each dormant without its key, so an empty `.env` means the tile simply keeps its EOD text.
+  The Today positions tile SELF-REFRESHES via a 60-second `st.fragment` tick, gated on
+  `stopwatch.armed()` (some vendor has a key) AND an open position — a keyless install or an
+  empty book must never spin a rerun loop that can learn nothing. The tick re-renders; the
+  vendor is only re-asked when the five-minute quote cache expires, and the fragment body
+  opens its own read-only connection because a fragment tick runs on its own thread and the
+  page's sqlite connection is thread-bound (the job panel already learned this).
 - **Alpaca paper API.** The internal simulated ledger covers both UK and US names; the Alpaca
   integration the spec mentions for US names is not wired.
 - **Reddit / StockTwits sentiment.** The sentiment module accepts arbitrary text via `extra_texts`,

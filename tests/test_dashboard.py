@@ -1668,6 +1668,32 @@ class TestStopWatch:
         assert quotes["PLTR.US"].at is None
 
 
+class TestStopWatchAutoRefresh:
+    """The Today positions tile self-refreshes only when refreshing can learn
+    something: a vendor key present AND a position to watch."""
+
+    def test_armed_means_any_vendor_has_a_key(self, monkeypatch):
+        class On:
+            def available(self): return True
+        class Off:
+            def available(self): return False
+        monkeypatch.setattr(stopwatch, "EodhdProvider", Off)
+        monkeypatch.setattr(stopwatch, "FinnhubProvider", On)
+        assert stopwatch.armed()
+        monkeypatch.setattr(stopwatch, "FinnhubProvider", Off)
+        assert not stopwatch.armed()
+
+    def test_the_tile_fragment_is_gated_on_armed_and_positions(self):
+        """The wiring must consult BOTH gates — a keyless install or an empty
+        book must never spin a 60s rerun loop for nothing."""
+        source = pathlib.Path(views.__file__).read_text()
+        block = source[source.index("def positions_tile"):]
+        gate = block[block.index('getattr(st, "fragment"'):][:400]
+        assert "stopwatch.armed()" in gate
+        assert 'status["open_positions"]' in gate
+        assert 'run_every="60s"' in gate
+
+
 class TestStopWatchVendors:
     """EODHD's real-time endpoint 403s on the owner's plan (measured), so the
     chain must hand over to Finnhub's free /quote — and both wire formats

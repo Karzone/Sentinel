@@ -103,6 +103,13 @@ def delayed_quotes(
     return quotes
 
 
+def armed() -> bool:
+    """Whether any quote vendor is configured. Callers use this to decide if
+    auto-refreshing a surface is worth anything — with no keys, a self-
+    refreshing tile would just re-render the same EOD text forever."""
+    return any(p.available() for p in (EodhdProvider(), FinnhubProvider()))
+
+
 def _vendor_chain(symbols: Sequence[str]) -> dict[str, DelayedQuote]:
     """First vendor that answers wins. EODHD's real-time endpoint needs a
     paid tier (the owner's plan 403s it — measured 2026-08-25); Finnhub's
