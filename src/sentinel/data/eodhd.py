@@ -12,7 +12,7 @@ adapter that can actually harbour a bug.
 from __future__ import annotations
 
 import datetime as dt
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Sequence
 
 import httpx
@@ -21,10 +21,18 @@ from ..config import api_key
 from ..domain.enums import Wrapper
 from ..domain.models import Bar, Fundamentals
 from ..money import dec
-from .base import ProviderError, currency_for, describe_http_error, redact
+from .base import DelayedQuote, ProviderError, currency_for, describe_http_error, redact
 
 BASE_URL = "https://eodhd.com/api"
-ADAPTER_VERSION = "eodhd-v1"
+
+
+def _is_number(value: Any) -> bool:
+    """EODHD writes "NA" (a string) where a number is missing."""
+    try:
+        Decimal(str(value))
+        return True
+    except (InvalidOperation, TypeError, ValueError):
+        return False
 
 
 def parse_eod(ticker: str, payload: Sequence[dict[str, Any]], *, currency: str | None = None) -> list[Bar]:
@@ -173,6 +181,40 @@ class EodhdProvider:
             {"from": start.isoformat(), "to": end.isoformat(), "period": "d", "order": "a"},
         )
         return parse_eod(ticker, payload)
+
+    def fetch_delayed_quotes(self, tickers: Sequence[str]) -> dict[str, DelayedQuote]:
+        """Delayed quotes for a handful of tickers, one request for the lot.
+
+        EODHD's `real-time/` path answers a single symbol as an object and a
+        `s=`-joined batch as a list; both shapes are handled. A symbol the
+        vendor answers with "NA" (unknown, or outside the plan) is simply
+        absent from the result — callers degrade, they don't crash.
+        """
+        symbols = [t for t in dict.fromkeys(tickers) if t]
+        if not symbols:
+            return {}
+        params: dict[str, Any] = {}
+        if len(symbols) > 1:
+            params["s"] = ",".join(symbols[1:])
+        payload = self._get(f"real-time/{symbols[0]}", params)
+        rows = payload if isinstance(payload, list) else [payload]
+        quotes: dict[str, DelayedQuote] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            code = row.get("code")
+            close = row.get("close")
+            if not code or not _is_number(close):
+                continue
+            stamp = row.get("timestamp")
+            at = (
+                dt.datetime.fromtimestamp(int(stamp), tz=dt.timezone.utc)
+                if _is_number(stamp) else None
+            )
+            quotes[str(code)] = DelayedQuote(
+                ticker=str(code), price=Decimal(str(close)), at=at
+            )
+        return quotes
 
     def fetch_fundamentals(self, ticker: str) -> Fundamentals | None:
         return parse_fundamentals(ticker, self._get(f"fundamentals/{ticker}", {}))

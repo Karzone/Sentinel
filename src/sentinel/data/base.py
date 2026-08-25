@@ -15,9 +15,25 @@ entire system with an empty ``.env``.
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import Protocol, runtime_checkable
 
 from ..domain.models import Bar, Fundamentals, NewsItem
+
+
+@dataclass(frozen=True)
+class DelayedQuote:
+    """One delayed intraday price print, vendor-agnostic.
+
+    Display-only by design: the stop-watch shows it beside a position's stop,
+    and it must NEVER feed a score — scores are defined on completed daily
+    bars (the recorded EOD rule).
+    """
+
+    ticker: str
+    price: Decimal
+    at: dt.datetime | None
 
 
 class ProviderError(RuntimeError):

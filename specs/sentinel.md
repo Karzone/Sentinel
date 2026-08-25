@@ -311,6 +311,18 @@ Recorded so the gaps are known rather than discovered.
   where every other surface keeps the swing 20/50 over 1/3/6 months. The lookback fetched
   before the display cut is always the longest SMA of the horizon's pair; when the store holds
   less history than window+200 the long average starts partway in and the caption says so.
+  **The delayed stop-watch (`dashboard/stopwatch.py`) is the ONE sanctioned use of intraday
+  data**, because stop discipline is the one investor decision a completed close answers too
+  late: the EOD mark can sit above the stop all day while the live price trades through it.
+  It fetches a delayed quote for the OPEN POSITIONS ONLY (never the watchlist), compares each
+  to its stop, and warns on the Today positions tile and above the Portfolio table, labelled
+  "delayed ~15 min". Boundaries: display-only (a delayed print never reaches a score, an
+  indicator, or the database — the EOD scoring rule is unchanged); five-minute cache per
+  ticker-set so Streamlit reruns cost nothing; and every failure degrades to the EOD message,
+  because a stop-watch that cries wolf on an error teaches the owner to ignore it. Quotes come
+  from a vendor chain — EODHD `real-time/` first (403s on the owner's current plan, measured
+  2026-08-25), then Finnhub's free `/quote` (US symbols, keyed back by the original ticker) —
+  each dormant without its key, so an empty `.env` means the tile simply keeps its EOD text.
 - **Alpaca paper API.** The internal simulated ledger covers both UK and US names; the Alpaca
   integration the spec mentions for US names is not wired.
 - **Reddit / StockTwits sentiment.** The sentiment module accepts arbitrary text via `extra_texts`,

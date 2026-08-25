@@ -8,13 +8,14 @@ untagged headline scored against a ticker is a fabricated input.
 from __future__ import annotations
 
 import datetime as dt
+from decimal import Decimal
 from typing import Any, Sequence
 
 import httpx
 
 from ..config import api_key
 from ..domain.models import NewsItem
-from .base import ProviderError, describe_http_error, redact
+from .base import DelayedQuote, ProviderError, describe_http_error, redact
 
 BASE_URL = "https://finnhub.io/api/v1"
 ADAPTER_VERSION = "finnhub-v1"
@@ -72,6 +73,46 @@ class FinnhubProvider:
             )
             response.raise_for_status()
             return parse_news(ticker, response.json(), since=since)
+        except httpx.HTTPError as exc:
+            raise ProviderError(
+                f"Finnhub request failed: {describe_http_error(exc, self._token)}"
+            ) from exc
+        finally:
+            if self._client is None:
+                client.close()
+
+    def fetch_delayed_quotes(self, tickers: Sequence[str]) -> dict[str, DelayedQuote]:
+        """Latest US quote per ticker from the free `/quote` endpoint.
+
+        One small request per symbol — the stop-watch only ever asks for the
+        open positions, and its five-minute cache keeps this far inside the
+        free rate limit. Finnhub keys US symbols bare ("PLTR"), so the
+        exchange suffix is stripped on the way out and the result is keyed by
+        the ORIGINAL ticker so callers can match their positions. An unknown
+        symbol answers c=0, t=0 and is skipped — absence, not a zero price.
+        """
+        if not self.available():
+            raise ProviderError("FINNHUB_API_KEY is not set")
+        client = self._client or httpx.Client(timeout=30)
+        quotes: dict[str, DelayedQuote] = {}
+        try:
+            for ticker in dict.fromkeys(t for t in tickers if t):
+                response = client.get(
+                    f"{BASE_URL}/quote",
+                    params={"symbol": ticker.split(".")[0], "token": self._token},
+                )
+                response.raise_for_status()
+                row = response.json()
+                price = row.get("c")
+                stamp = row.get("t")
+                if not price:  # 0 or None = symbol unknown to the vendor
+                    continue
+                quotes[ticker] = DelayedQuote(
+                    ticker=ticker, price=Decimal(str(price)),
+                    at=(dt.datetime.fromtimestamp(int(stamp), tz=dt.timezone.utc)
+                        if stamp else None),
+                )
+            return quotes
         except httpx.HTTPError as exc:
             raise ProviderError(
                 f"Finnhub request failed: {describe_http_error(exc, self._token)}"

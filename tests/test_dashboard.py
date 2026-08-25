@@ -18,7 +18,7 @@ import pandas as pd
 import pytest
 
 from sentinel.dashboard import (
-    auth, charts, components as ui, palette as pal, queries, views,
+    auth, charts, components as ui, palette as pal, queries, stopwatch, views,
 )
 from sentinel.evals import signal_quality
 from sentinel.domain import IdeaClass
@@ -1573,6 +1573,151 @@ class TestCandleWindow:
         sma50 = [r for r in melted if r["series"] == "SMA 50"]
         assert len(sma20) == 22, "SMA 20 should cover every displayed candle"
         assert len(sma50) == 22, "SMA 50 should cover every displayed candle"
+
+
+class TestStopWatch:
+    """The delayed stop-watch: the ONE use of intraday data — a ~15-min
+    delayed price against each open position's stop, display-only. Scores
+    stay on completed closes; every failure degrades to the EOD message."""
+
+    def _positions(self, **overrides):
+        base = {"ticker": ["PLTR.US", "MSFT.US"], "stop": [70.0, float("nan")]}
+        base.update(overrides)
+        return pd.DataFrame(base)
+
+    def _quote(self, ticker, price, at=None):
+        from sentinel.data.eodhd import DelayedQuote
+        return DelayedQuote(ticker=ticker, price=Decimal(str(price)), at=at)
+
+    def test_a_price_at_or_below_the_stop_is_a_breach(self):
+        found = stopwatch.breaches(
+            self._positions(),
+            {"PLTR.US": self._quote("PLTR.US", 69.5)},
+        )
+        assert [b.ticker for b in found] == ["PLTR.US"]
+        assert found[0].stop == 70.0 and found[0].price == 69.5
+
+    def test_no_stop_or_no_quote_is_never_an_alert(self):
+        # MSFT has no stop; PLTR has no quote in the batch — silence, not
+        # a guess.
+        assert stopwatch.breaches(
+            self._positions(), {"MSFT.US": self._quote("MSFT.US", 1.0)}
+        ) == []
+
+    def test_a_price_above_the_stop_is_quiet(self):
+        assert stopwatch.breaches(
+            self._positions(), {"PLTR.US": self._quote("PLTR.US", 70.01)}
+        ) == []
+
+    def test_quotes_are_cached_for_five_minutes_of_reruns(self):
+        stopwatch._cache.clear()
+        calls = []
+        clock = {"t": 1000.0}
+        def fetch(tickers):
+            calls.append(list(tickers))
+            return {"PLTR.US": self._quote("PLTR.US", 69.0)}
+        for _ in range(3):  # three Streamlit reruns inside the TTL
+            stopwatch.check(self._positions(), fetch=fetch, now=lambda: clock["t"])
+        assert len(calls) == 1, "every rerun re-fetched — the cache is dead"
+        clock["t"] += stopwatch.CACHE_TTL_SECONDS + 1
+        stopwatch.check(self._positions(), fetch=fetch, now=lambda: clock["t"])
+        assert len(calls) == 2, "the TTL never expires"
+
+    def test_a_vendor_error_degrades_to_silence(self):
+        from sentinel.data.base import ProviderError
+        stopwatch._cache.clear()
+        def fetch(tickers):
+            raise ProviderError("plan does not include real-time")
+        assert stopwatch.check(self._positions(), fetch=fetch) == []
+
+    def test_no_positions_means_no_fetch_at_all(self):
+        stopwatch._cache.clear()
+        def fetch(tickers):
+            raise AssertionError("fetched with nothing to watch")
+        assert stopwatch.check(pd.DataFrame(), fetch=fetch) == []
+
+    def test_delayed_quotes_parse_both_vendor_shapes(self):
+        """EODHD answers one symbol as an object, a batch as a list, and
+        writes the string "NA" where a number is missing."""
+        import httpx
+        from sentinel.data.eodhd import EodhdProvider
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=[
+                {"code": "PLTR.US", "close": 69.42, "timestamp": 1756137600},
+                {"code": "MSFT.US", "close": "NA", "timestamp": "NA"},
+            ])
+        provider = EodhdProvider(
+            "test-token",
+            client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+        quotes = provider.fetch_delayed_quotes(["PLTR.US", "MSFT.US"])
+        assert set(quotes) == {"PLTR.US"}, "the NA row must be absent, not zero"
+        assert quotes["PLTR.US"].price == Decimal("69.42")
+        assert quotes["PLTR.US"].at is not None
+
+        def single(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"code": "PLTR.US", "close": 70.1,
+                                             "timestamp": "NA"})
+        provider = EodhdProvider(
+            "test-token",
+            client=httpx.Client(transport=httpx.MockTransport(single)),
+        )
+        quotes = provider.fetch_delayed_quotes(["PLTR.US"])
+        assert quotes["PLTR.US"].price == Decimal("70.1")
+        assert quotes["PLTR.US"].at is None
+
+
+class TestStopWatchVendors:
+    """EODHD's real-time endpoint 403s on the owner's plan (measured), so the
+    chain must hand over to Finnhub's free /quote — and both wire formats
+    must parse."""
+
+    def test_finnhub_quotes_parse_and_zero_means_unknown(self):
+        import httpx
+        from sentinel.data.finnhub import FinnhubProvider
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            symbol = request.url.params["symbol"]
+            assert "." not in symbol, "Finnhub wants bare US symbols"
+            if symbol == "PLTR":
+                return httpx.Response(200, json={"c": 69.42, "t": 1756137600})
+            return httpx.Response(200, json={"c": 0, "t": 0})
+        provider = FinnhubProvider(
+            "test-token",
+            client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+        quotes = provider.fetch_delayed_quotes(["PLTR.US", "XXXX.US"])
+        assert set(quotes) == {"PLTR.US"}, "c=0 is 'unknown symbol', not a price"
+        assert quotes["PLTR.US"].ticker == "PLTR.US"
+        assert quotes["PLTR.US"].price == Decimal("69.42")
+
+    def test_the_chain_hands_over_when_the_first_vendor_refuses(self, monkeypatch):
+        from sentinel.data.base import DelayedQuote, ProviderError
+
+        class Refuses:
+            def available(self): return True
+            def fetch_delayed_quotes(self, tickers):
+                raise ProviderError("403 Forbidden")
+
+        class Answers:
+            def available(self): return True
+            def fetch_delayed_quotes(self, tickers):
+                return {"PLTR.US": DelayedQuote("PLTR.US", Decimal("69"), None)}
+
+        monkeypatch.setattr(stopwatch, "EodhdProvider", Refuses)
+        monkeypatch.setattr(stopwatch, "FinnhubProvider", Answers)
+        quotes = stopwatch._vendor_chain(["PLTR.US"])
+        assert set(quotes) == {"PLTR.US"}
+
+    def test_both_vendors_dormant_is_silence_not_an_error(self, monkeypatch):
+        class Dormant:
+            def available(self): return False
+            def fetch_delayed_quotes(self, tickers):
+                raise AssertionError("fetched while dormant")
+        monkeypatch.setattr(stopwatch, "EodhdProvider", Dormant)
+        monkeypatch.setattr(stopwatch, "FinnhubProvider", Dormant)
+        assert stopwatch._vendor_chain(["PLTR.US"]) == {}
 
 
 class TestInvestHorizon:

@@ -23,7 +23,7 @@ import pandas as pd
 from .. import DISCLAIMER
 from ..config import Config
 from ..domain.enums import IdeaClass
-from . import charts, components as ui, palette as pal, queries
+from . import charts, components as ui, palette as pal, queries, stopwatch
 
 
 @dataclass(slots=True)
@@ -127,12 +127,23 @@ def today(st, ctx: Context) -> None:
         ), unsafe_allow_html=True)
     with row[2]:
         trouble = status["positions_below_stop"]
+        # The stop-watch: a DELAYED (~15 min) price against each stop, for
+        # open positions only. Display-only — scores stay on the close (see
+        # stopwatch.py). It degrades to the EOD message on any failure.
+        live = (stopwatch.check(queries.positions_frame(ctx.conn))
+                if status["open_positions"] else [])
+        if live:
+            names = ", ".join(b.ticker for b in live)
+            delta = f"{names} trading below its stop right now (delayed ~15 min)"
+        elif trouble:
+            delta = f"{trouble} below its stop — see Portfolio"
+        else:
+            delta = ("all above their stops" if status["open_positions"]
+                     else "none recorded yet")
         st.markdown(ui.tile(
             "Your positions", str(status["open_positions"]),
-            delta=(f"{trouble} below its stop — see Portfolio" if trouble
-                   else ("all above their stops" if status["open_positions"]
-                         else "none recorded yet")),
-            delta_status="critical" if trouble else None, mode=ctx.mode,
+            delta=delta,
+            delta_status="critical" if (live or trouble) else None, mode=ctx.mode,
         ), unsafe_allow_html=True)
 
     st.divider()
@@ -415,6 +426,16 @@ def portfolio(st, ctx: Context) -> None:
     with left:
         _section(st, "Open positions", "Distance to stop is the column the brief leads on.")
         positions = queries.positions_frame(ctx.conn)
+        # Same stop-watch as the Today tile: delayed price vs stop, never a
+        # score input. The Mark column stays the EOD close — two different
+        # questions, both labelled.
+        for breach in stopwatch.check(positions):
+            stamp = f" at {breach.at:%H:%M} UTC" if breach.at else ""
+            st.markdown(ui.badge(
+                "critical",
+                f"{breach.ticker} {breach.price:,.2f} is below its stop "
+                f"{breach.stop:,.2f} (delayed ~15 min{stamp})",
+            ), unsafe_allow_html=True)
         if positions.empty:
             st.caption("No open positions. Satellite capital is entirely in cash.")
         else:
