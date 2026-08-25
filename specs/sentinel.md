@@ -329,6 +329,28 @@ Recorded so the gaps are known rather than discovered.
   vendor is only re-asked when the five-minute quote cache expires, and the fragment body
   opens its own read-only connection because a fragment tick runs on its own thread and the
   page's sqlite connection is thread-bound (the job panel already learned this).
+  **Idea lists are single surfaces (owner call, 2026-08-25: "club these together … the name as
+  link").** The Today top-five and the Investments list no longer draw a leaderboard chart
+  beside cards with Open buttons — the same numbers twice. Each `entity_card` now carries the
+  comparison itself (a thin score meter with a tick at the notable-70 line) and the NAME is
+  the way in, via a `?open=TICKER` deep link (`_opened_ticker`, restricted to tickers the page
+  listed; `target=_self` so Streamlit reloads the app with the param; an opened stock is
+  bookmarkable and closes via "← Close" → `?`). Favourites rows follow the same rule. The link
+  selector is `.stApp a.sx-entity-link` — Streamlit's markdown link rule out-ranks a bare
+  class, the same specificity fight the section titles lost.
+  **A watched job that finishes puts the results on screen** (owner: "can we not auto reload
+  and show the results?"): `_running_job_panel` fires `st.rerun(scope="app")` the moment
+  `jobs.running()` goes empty — app-scoped because inside a fragment a bare rerun redraws only
+  the panel. The "reload the page" instruction survives only as the no-`st.rerun` fallback.
+  **Search leads with the vendor lookup for ANY unknown entry.** "Tesla" is five letters, so
+  `looks_like_ticker` read it as a ticker and fetched the nonexistent TESLA.US while the stock
+  was TSLA.US (owner report, 2026-08-25) — a zero-bar ingest that left search empty and the
+  ticker invisible. The symbol search matches names AND codes, so it now always runs first;
+  the exact-ticker fetch offer renders only when the lookup is dormant or empty
+  (`_offer_name_lookup` returns whether it showed matches). And because EODHD's `/search` also
+  403s on the owner's plan (measured), `lookup.search_symbols` chains to Finnhub's free
+  `/search` — US listings only, bare symbols suffixed `.US`, dotted non-US symbols dropped
+  rather than mis-suffixed into tickers the ingest cannot fetch.
 - **Alpaca paper API.** The internal simulated ledger covers both UK and US names; the Alpaca
   integration the spec mentions for US names is not wired.
 - **Reddit / StockTwits sentiment.** The sentiment module accepts arbitrary text via `extra_texts`,

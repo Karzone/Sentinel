@@ -542,3 +542,55 @@ class TestSymbolLookup:
         with pytest.raises(ProviderError) as excinfo:
             lookup.search_symbols("x", token="sekret-token", client=client)
         assert "sekret-token" not in str(excinfo.value)
+
+
+class TestFinnhubSymbolSearchFallback:
+    """EODHD's /search 403s on the owner's plan (measured 2026-08-25), so
+    the lookup chains to Finnhub's free /search — US listings only, because
+    Finnhub keys US symbols bare and other exchanges use a different
+    suffix scheme than the ingest understands."""
+
+    def test_bare_us_symbols_are_suffixed_and_dotted_ones_dropped(self):
+        from sentinel.data import lookup
+        payload = {"result": [
+            {"symbol": "TSLA", "description": "TESLA INC", "type": "Common Stock"},
+            {"symbol": "VOD.L", "description": "VODAFONE", "type": "Common Stock"},
+            {"symbol": "TL0.F", "description": "TESLA (FRANKFURT)"},
+        ]}
+        matches = lookup.parse_finnhub_search(payload)
+        assert [m.ticker for m in matches] == ["TSLA.US"]
+        assert matches[0].name == "Tesla Inc"
+        assert matches[0].exchange == "US"
+
+    def test_the_chain_falls_back_when_eodhd_refuses(self, monkeypatch):
+        import httpx
+        from sentinel.data import lookup
+        from sentinel.data.base import DelayedQuote  # noqa: F401 - shared module import path check
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(403)
+        eodhd_client = httpx.Client(transport=httpx.MockTransport(handler))
+        sentinel_match = lookup.SymbolMatch("TSLA.US", "Tesla Inc", "US", "USD")
+        monkeypatch.setattr(lookup, "api_key",
+                            lambda name: "fk" if name == "FINNHUB_API_KEY" else None)
+        monkeypatch.setattr(lookup, "_finnhub_search",
+                            lambda text, *, token, limit=6: [sentinel_match])
+        out = lookup.search_symbols("Tesla", token="eodhd-k", client=eodhd_client)
+        assert out == [sentinel_match]
+
+    def test_both_vendors_failing_raises_with_both_reasons(self, monkeypatch):
+        import httpx
+        from sentinel.data import lookup
+        from sentinel.data.base import ProviderError
+        import pytest
+
+        eodhd_client = httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(403)))
+        monkeypatch.setattr(lookup, "api_key",
+                            lambda name: "fk" if name == "FINNHUB_API_KEY" else None)
+        def refuse(text, *, token, limit=6):
+            raise ProviderError("Finnhub symbol search failed: 429")
+        monkeypatch.setattr(lookup, "_finnhub_search", refuse)
+        with pytest.raises(ProviderError) as err:
+            lookup.search_symbols("Tesla", token="eodhd-k", client=eodhd_client)
+        assert "EODHD" in str(err.value) and "Finnhub" in str(err.value)

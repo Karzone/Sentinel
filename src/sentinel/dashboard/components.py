@@ -122,6 +122,23 @@ def shell_css(mode: str) -> str:
   .sx-entity-score {{ font-weight: 650; font-size: 13px; color: {p.ink}; }}
   .sx-chip {{ font-size: 10.5px; padding: 1px 8px; border-radius: 999px;
       border: 1px solid {p.border}; color: {p.ink_secondary}; }}
+  /* .stApp + element, because Streamlit's markdown-container link rule
+     out-ranks a bare class — the names rendered browser-blue underlined
+     (same specificity fight the section titles lost; caught in a
+     screenshot). Ink at rest: the card and cursor say "clickable", the
+     accent arrives on hover. */
+  .stApp a.sx-entity-link {{ color: {p.ink}; text-decoration: none; }}
+  .stApp a.sx-entity-link:hover {{ color: {p.series[0]};
+      text-decoration: underline; text-underline-offset: 3px; }}
+  /* The score as a thin magnitude bar; the tick is the notable-70 line the
+     section note explains — the same reference the old leaderboard chart
+     drew, kept when the chart folded into the cards. */
+  .sx-entity-meter {{ position: relative; height: 4px; border-radius: 2px;
+      background: {p.grid}; margin: 9px 0 2px; }}
+  .sx-entity-meter i {{ position: absolute; top: 0; bottom: 0; left: 0;
+      border-radius: 2px; background: {p.series[0]}; }}
+  .sx-entity-meter::after {{ content: ""; position: absolute; left: 70%;
+      top: -2px; bottom: -2px; width: 1px; background: {p.axis}; }}
   .stButton button {{ border-radius: 8px; font-weight: 500; }}
   @media (prefers-reduced-motion: no-preference) {{
     .sx-entity {{ transition: background 0.12s ease; }}
@@ -230,11 +247,26 @@ def section(title: str, note: str | None = None, *, eyebrow: str | None = None) 
             f'<h4 class="sx-sec-title">{html.escape(title)}</h4>{body}</div>')
 
 
+def entity_link(name: str, href: str) -> str:
+    """A stock name that IS the way in — ink at rest, accent on hover.
+    target=_self keeps Streamlit reloading the app with the query param
+    rather than opening a tab."""
+    return (f'<a class="sx-entity-link" href="{html.escape(href, quote=True)}" '
+            f'target="_self">{html.escape(name)}</a>')
+
+
 def entity_card(name: str, *, meta: tuple[str, ...] = (), score: float | None = None,
-                chip: str | None = None) -> str:
+                chip: str | None = None, href: str | None = None,
+                meter: float | None = None) -> str:
     """One stock in a list: name, quiet tabular meta, the score emphasised,
     conviction (or any qualifier) as a chip. Replaces the ad-hoc
-    markdown-with-opacity rows the idea lists used to draw."""
+    markdown-with-opacity rows the idea lists used to draw.
+
+    `href` makes the NAME the way into the detail view (no separate Open
+    button — owner call, 2026-08-25). `meter` draws the score as a thin bar
+    with a reference tick at the notable-70 line, which is what replaced the
+    side-by-side leaderboard chart: one surface instead of the same numbers
+    twice."""
     parts = [f"<span>{html.escape(item)}</span>" for item in meta]
     if score is not None:
         parts.append(f'<span class="sx-entity-score">{score:.0f}'
@@ -242,8 +274,14 @@ def entity_card(name: str, *, meta: tuple[str, ...] = (), score: float | None = 
     if chip:
         parts.append(f'<span class="sx-chip">{html.escape(chip)}</span>')
     meta_html = (f'<p class="sx-entity-meta">{"".join(parts)}</p>' if parts else "")
+    name_html = entity_link(name, href) if href else html.escape(name)
+    meter_html = ""
+    if meter is not None:
+        width = max(0.0, min(100.0, float(meter)))
+        meter_html = (f'<div class="sx-entity-meter">'
+                      f'<i style="width:{width:.0f}%"></i></div>')
     return (f'<div class="sx-entity"><p class="sx-entity-name">'
-            f"{html.escape(name)}</p>{meta_html}</div>")
+            f"{name_html}</p>{meta_html}{meter_html}</div>")
 
 
 def verdict_banner(stance: str, headline: str, *, status: str | None = None,

@@ -1,4 +1,11 @@
-"""Name -> symbol resolution for the search box, via EODHD's search API.
+"""Name -> symbol resolution for the search box.
+
+Two vendors, first answer wins: EODHD's `/search` (suffixed symbols across
+every exchange it covers — but 403 on the owner's current plan, measured
+2026-08-25), then Finnhub's free `/search` (US listings only: Finnhub keys
+US symbols bare, and inventing exchange suffixes for its non-US results
+would produce tickers the ingest cannot fetch — so dotted symbols are
+dropped rather than guessed at).
 
 "Rocket Lab" is not a ticker, and forcing a beginner to know RKLB before the
 app will talk to them is the ticker tail wagging the dog. This is the one
@@ -62,31 +69,96 @@ def parse_search(payload: Sequence[dict[str, Any]], *, limit: int = 6) -> list[S
     return matches
 
 
-def search_symbols(
-    query: str, *, token: str | None = None, client: httpx.Client | None = None,
-    limit: int = 6,
+def parse_finnhub_search(payload: dict[str, Any], *, limit: int = 6) -> list[SymbolMatch]:
+    """Finnhub `/search` rows -> matches. US listings only: a bare symbol
+    ("TSLA") becomes "TSLA.US"; a dotted one ("VOD.L") is another exchange's
+    scheme and is dropped rather than mis-suffixed."""
+    matches: list[SymbolMatch] = []
+    for row in payload.get("result") or []:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol or "." in symbol:
+            continue
+        matches.append(SymbolMatch(
+            ticker=f"{symbol}.US",
+            name=str(row.get("description") or symbol).title(),
+            exchange="US",
+            currency="USD",
+        ))
+        if len(matches) >= limit:
+            break
+    return matches
+
+
+def _finnhub_search(
+    text: str, *, token: str, client: httpx.Client | None = None, limit: int = 6,
 ) -> list[SymbolMatch]:
-    token = token or api_key("EODHD_API_KEY")
-    if not token:
-        raise ProviderError("EODHD_API_KEY is not set — name search needs it")
-    text = query.strip()
-    if not text:
-        return []
     http = client or httpx.Client(timeout=15)
     try:
         response = http.get(
-            f"{SEARCH_URL}/{text}",
-            params={"api_token": token, "fmt": "json", "limit": limit},
+            "https://finnhub.io/api/v1/search",
+            params={"q": text, "token": token},
         )
         response.raise_for_status()
         payload = response.json()
     except httpx.HTTPError as exc:
         raise ProviderError(
-            f"EODHD symbol search failed: {describe_http_error(exc, token)}"
+            f"Finnhub symbol search failed: {describe_http_error(exc, token)}"
         ) from exc
     finally:
         if client is None:
             http.close()
-    if not isinstance(payload, list):
-        raise ProviderError(f"EODHD symbol search returned a non-list payload for {text!r}")
-    return parse_search(payload, limit=limit)
+    if not isinstance(payload, dict):
+        raise ProviderError(f"Finnhub symbol search returned a non-dict payload for {text!r}")
+    return parse_finnhub_search(payload, limit=limit)
+
+
+def search_symbols(
+    query: str, *, token: str | None = None, client: httpx.Client | None = None,
+    limit: int = 6,
+) -> list[SymbolMatch]:
+    text = query.strip()
+    if not text:
+        return []
+    eodhd_token = token or api_key("EODHD_API_KEY")
+    finnhub_token = api_key("FINNHUB_API_KEY")
+    if not eodhd_token and not finnhub_token:
+        raise ProviderError(
+            "no search vendor configured — set EODHD_API_KEY or FINNHUB_API_KEY")
+
+    failures: list[str] = []
+    if eodhd_token:
+        http = client or httpx.Client(timeout=15)
+        try:
+            response = http.get(
+                f"{SEARCH_URL}/{text}",
+                params={"api_token": eodhd_token, "fmt": "json", "limit": limit},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, list):
+                raise ProviderError(
+                    f"EODHD symbol search returned a non-list payload for {text!r}")
+            matches = parse_search(payload, limit=limit)
+            if matches:
+                return matches
+        except httpx.HTTPError as exc:
+            failures.append(
+                f"EODHD symbol search failed: {describe_http_error(exc, eodhd_token)}")
+        finally:
+            if client is None:
+                http.close()
+
+    if finnhub_token:
+        try:
+            # `client` is not forwarded on the fallback leg: an injected test
+            # client stubs ONE vendor's wire format, and this is a different
+            # vendor's.
+            return _finnhub_search(text, token=finnhub_token, limit=limit)
+        except ProviderError as exc:
+            failures.append(str(exc))
+
+    if failures:
+        raise ProviderError("; ".join(failures))
+    return []

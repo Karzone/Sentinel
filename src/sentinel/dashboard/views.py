@@ -183,22 +183,19 @@ def today(st, ctx: Context) -> None:
         st.info("No scored ideas yet. Fetch data and run the report below — "
                 "then the best ideas appear here.", icon="🌱")
     else:
-        top = qualifying[:5]
-        leaders = queries.top_ideas_frame(ctx.conn, limit=5)
-        chart_col, list_col = st.columns([3, 2], gap="large")
-        with chart_col:
-            _chart(st, charts.score_leaders(leaders, ctx.mode), key="today-top5")
-        with list_col:
-            for idea_ in top:
-                line = st.columns([3, 1], gap="small")
-                name = queries.company_name(ctx.conn, idea_.ticker)
-                line[0].markdown(ui.entity_card(
-                    name or idea_.ticker, meta=(idea_.ticker,),
-                    score=float(idea_.composite_score),
-                    chip=f"{idea_.conviction.value} conviction",
-                ), unsafe_allow_html=True)
-                if line[1].button("Open", key=f"today-idea-{idea_.id}"):
-                    st.session_state["today-open"] = idea_.ticker
+        # One surface, not two: the leaderboard chart and the card list said
+        # the same numbers side by side (owner: "club these together"). Each
+        # card carries the comparison the chart drew — the meter bar with
+        # the 70 tick — and the NAME is the way in; no Open button.
+        for idea_ in qualifying[:5]:
+            name = queries.company_name(ctx.conn, idea_.ticker)
+            st.markdown(ui.entity_card(
+                name or idea_.ticker, meta=(idea_.ticker,),
+                score=float(idea_.composite_score),
+                chip=f"{idea_.conviction.value} conviction",
+                href=f"?open={idea_.ticker}",
+                meter=float(idea_.composite_score),
+            ), unsafe_allow_html=True)
 
     st.divider()
     _section(st, "Your favourites",
@@ -210,9 +207,10 @@ def today(st, ctx: Context) -> None:
                    "or the Search page — and press ☆ to track it here.")
     else:
         for row in favourites:
-            line = st.columns([3, 2, 2, 2, 2], gap="small")
+            line = st.columns([3, 2, 2, 3], gap="small")
             line[0].markdown(
-                f'<p class="sx-entity-name">{row["name"] or row["ticker"]}</p>'
+                f'<p class="sx-entity-name">'
+                f'{ui.entity_link(row["name"] or row["ticker"], f"?open={row['ticker']}")}</p>'
                 f'<p class="sx-entity-meta">{row["ticker"]}</p>',
                 unsafe_allow_html=True)
             line[1].markdown("—" if row["last_close"] is None
@@ -223,12 +221,12 @@ def today(st, ctx: Context) -> None:
                 "not scored yet" if row["score"] is None
                 else f"score {row['score']:.0f}"
                      + (" · passed checks" if row["accepted"] else ""))
-            if line[4].button("Open", key=f"today-fav-{row['ticker']}"):
-                st.session_state["today-open"] = row["ticker"]
 
-    opened = st.session_state.get("today-open")
+    allowed = {i.ticker for i in qualifying} | {r["ticker"] for r in favourites}
+    opened = _opened_ticker(st, allowed=allowed)
     if opened:
         st.divider()
+        st.markdown(ui.entity_link("← Close", "?"), unsafe_allow_html=True)
         _ticker_detail(st, ctx, opened)
 
     if ctx.writable:
@@ -620,6 +618,19 @@ def _running_job_panel(st, ctx: Context, key: str) -> None:
     def body() -> None:
         current = jobs.running(ctx.db_path)
         if current is None:
+            # The job finished while this panel was watching — put the
+            # results on screen instead of asking for a reload (owner:
+            # "can we not auto reload and show the results?"). scope="app"
+            # matters: inside a fragment a bare rerun would redraw only
+            # this panel, and the results live in the rest of the page.
+            rerun = getattr(st, "rerun", None)
+            if rerun is not None:
+                try:
+                    rerun(scope="app")
+                except TypeError:
+                    rerun()
+            # Only reachable when st.rerun is unavailable (very old
+            # Streamlit): keep the manual instruction as the fallback.
             st.success("The job has finished — reload the page to see the "
                        "results.", icon="✅")
             return
@@ -713,28 +724,23 @@ def investments(st, ctx: Context) -> None:
                     "the Today page — long-term ideas then appear here.",
                     icon="🌱")
     else:
-        top = qualifying[:10]
-        leaders = queries.top_ideas_frame(ctx.conn, limit=10,
-                                          idea_class=IdeaClass.LONG_TERM)
-        chart_col, list_col = st.columns([3, 2], gap="large")
-        with chart_col:
-            _chart(st, charts.score_leaders(leaders, ctx.mode),
-                   key="invest-top")
-        with list_col:
-            for idea_ in top:
-                line = st.columns([3, 1], gap="small")
-                name = queries.company_name(ctx.conn, idea_.ticker)
-                line[0].markdown(ui.entity_card(
-                    name or idea_.ticker, meta=(idea_.ticker,),
-                    score=float(idea_.composite_score),
-                    chip=f"{idea_.conviction.value} conviction",
-                ), unsafe_allow_html=True)
-                if line[1].button("Open", key=f"invest-idea-{idea_.id}"):
-                    st.session_state["invest-open"] = idea_.ticker
+        # Same fold as the Today list: chart + cards said the same numbers
+        # twice; now the card meter carries the comparison and the name is
+        # the link in.
+        for idea_ in qualifying[:10]:
+            name = queries.company_name(ctx.conn, idea_.ticker)
+            st.markdown(ui.entity_card(
+                name or idea_.ticker, meta=(idea_.ticker,),
+                score=float(idea_.composite_score),
+                chip=f"{idea_.conviction.value} conviction",
+                href=f"?open={idea_.ticker}",
+                meter=float(idea_.composite_score),
+            ), unsafe_allow_html=True)
 
-    opened = st.session_state.get("invest-open")
+    opened = _opened_ticker(st, allowed={i.ticker for i in qualifying})
     if opened:
         st.divider()
+        st.markdown(ui.entity_link("← Close", "?"), unsafe_allow_html=True)
         _ticker_detail(st, ctx, opened, horizon="invest")
 
     st.divider()
@@ -1205,14 +1211,19 @@ def search(st, ctx: Context) -> None:
         return
 
     text = chosen.strip()
-    if queries.looks_like_ticker(text):
-        ticker = queries.normalize_ticker(text)
-        if ticker in options.values():
-            _ticker_detail(st, ctx, ticker)
-        else:
-            _offer_fetch(st, ctx, ticker)
+    ticker = (queries.normalize_ticker(text)
+              if queries.looks_like_ticker(text) else None)
+    if ticker and ticker in options.values():
+        _ticker_detail(st, ctx, ticker)
         return
-    _offer_name_lookup(st, ctx, text)
+    # Unknown text: the vendor's symbol search matches BOTH names and codes
+    # ("Tesla" → TSLA.US, "SOFI" → SOFI.US), so it always leads. Trusting
+    # the ticker shape first is how "Tesla" — five letters, so
+    # ticker-shaped — fetched the nonexistent TESLA.US while the actual
+    # stock was TSLA.US (owner report, 2026-08-25). The exact-ticker offer
+    # remains as the fallback for a dormant or empty lookup.
+    if not _offer_name_lookup(st, ctx, text) and ticker:
+        _offer_fetch(st, ctx, ticker)
 
 
 #: Query -> matches, remembered for the session. Streamlit reruns the whole
@@ -1221,10 +1232,13 @@ def search(st, ctx: Context) -> None:
 _LOOKUP_CACHE: dict[str, list] = {}
 
 
-def _offer_name_lookup(st, ctx: Context, text: str) -> None:
-    """A company name, not a ticker: ask the data vendor which symbols match,
-    and offer to fetch one. One request per submitted query, cached for the
-    session — never a call per keystroke against a metered vendor."""
+def _offer_name_lookup(st, ctx: Context, text: str) -> bool:
+    """Ask the data vendor which listings match, and offer to fetch one.
+
+    Returns True when it rendered matches — the caller uses False to fall
+    back to the exact-ticker fetch offer. One request per submitted query,
+    cached for the session — never a call per keystroke against a metered
+    vendor."""
     from ..data import lookup
     from ..data.base import ProviderError
 
@@ -1235,12 +1249,12 @@ def _offer_name_lookup(st, ctx: Context, text: str) -> None:
             st.info(f"Could not search by name: {exc}", icon="🔌")
             st.caption("You can still type the ticker directly — e.g. RKLB "
                        "for Rocket Lab.")
-            return
+            return False
     matches = _LOOKUP_CACHE[text]
     if not matches:
         st.info(f"The data vendor found no listing matching **{text}**. "
                 f"Check the spelling, or type the ticker directly.", icon="🔍")
-        return
+        return False
 
     st.markdown(f'<p class="sx-note">Listings matching “{text}” — pick one to '
                 f'fetch its prices, fundamentals and news.</p>',
@@ -1270,6 +1284,7 @@ def _offer_name_lookup(st, ctx: Context, text: str) -> None:
                 st.caption("Another job is already running; one at a time.")
     if not ctx.writable:
         st.caption("Fetch one with `sentinel ingest --tickers <SYMBOL>` and reload.")
+    return True
 
 
 def _favourite_star(st, ctx: Context, ticker: str) -> None:
@@ -1378,6 +1393,17 @@ def _trade_plan(st, ctx: Context, ticker: str) -> None:
             f"that stop supports about **{shares} shares**. If you do trade it, "
             f"record the fill on the Portfolio page so the app watches the stop for you."
         )
+
+
+def _opened_ticker(st, *, allowed: set[str]) -> str | None:
+    """The ?open=TICKER deep link — card names are plain links, not buttons
+    (owner call, 2026-08-25). Restricted to tickers the page itself listed,
+    so a hand-edited URL cannot open arbitrary detail views."""
+    params = getattr(st, "query_params", None)
+    if params is None:
+        return None
+    ticker = params.get("open")
+    return ticker if ticker in allowed else None
 
 
 def _ticker_detail(st, ctx: Context, ticker: str, *, horizon: str = "swing") -> None:

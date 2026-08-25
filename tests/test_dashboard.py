@@ -1575,6 +1575,119 @@ class TestCandleWindow:
         assert len(sma50) == 22, "SMA 50 should cover every displayed candle"
 
 
+class TestSearchLeadsWithTheNameLookup:
+    """"it doesn't show Tesla even after page refresh": "Tesla" is five
+    letters, so the ticker-shape heuristic read it as a ticker and fetched
+    the nonexistent TESLA.US — while the actual stock is TSLA.US. For any
+    unknown entry the vendor lookup now leads (it matches names AND codes);
+    the exact-ticker fetch offer survives only as its fallback."""
+
+    def _st(self):
+        class FakeSt:
+            session_state = {}
+            notes = []
+            def info(self, msg, **k): self.notes.append(("info", msg))
+            def caption(self, msg, **k): self.notes.append(("caption", msg))
+            def markdown(self, *a, **k): self.notes.append(("markdown",))
+            def columns(self, spec, **k):
+                class Col:
+                    def markdown(self, *a, **k): pass
+                    def button(self, *a, **k): return False
+                return [Col() for _ in spec]
+        return FakeSt()
+
+    def _ctx(self, tmp_path):
+        return views.Context(conn=None, config=None, mode="light",
+                             db_path=tmp_path / "db.sqlite", writable=False)
+
+    def test_lookup_reports_matches_so_the_caller_can_fall_back(
+            self, monkeypatch, tmp_path):
+        from sentinel.data import lookup
+        from sentinel.data.base import ProviderError
+        views._LOOKUP_CACHE.clear()
+
+        class Match:
+            name, ticker, exchange, currency = "Tesla Inc", "TSLA.US", "US", "USD"
+        monkeypatch.setattr(lookup, "search_symbols", lambda text: [Match()])
+        assert views._offer_name_lookup(self._st(), self._ctx(tmp_path), "Tesla") is True
+
+        views._LOOKUP_CACHE.clear()
+        monkeypatch.setattr(lookup, "search_symbols", lambda text: [])
+        assert views._offer_name_lookup(self._st(), self._ctx(tmp_path), "Xyzzy") is False
+
+        views._LOOKUP_CACHE.clear()
+        def refuse(text):
+            raise ProviderError("EODHD_API_KEY is not set")
+        monkeypatch.setattr(lookup, "search_symbols", refuse)
+        assert views._offer_name_lookup(self._st(), self._ctx(tmp_path), "Tesla") is False
+
+    def test_the_ticker_guess_no_longer_preempts_the_lookup(self):
+        source = pathlib.Path(views.__file__).read_text()
+        block = source[source.index("def search("):source.index("def _offer_name_lookup")]
+        assert "_offer_name_lookup(st, ctx, text) and ticker" in block.replace("not ", ""), \
+            "the fetch offer must be gated on the lookup finding nothing"
+        # The old shape — offering the fetch purely on ticker shape — is gone.
+        assert "else:\n            _offer_fetch" not in block
+
+
+class TestJobFinishShowsResults:
+    """"can we not auto reload and show the results?" — when the watched job
+    finishes, the panel reruns the WHOLE app so the results render, instead
+    of printing a reload instruction."""
+
+    def test_a_finished_job_triggers_an_app_scoped_rerun(self, monkeypatch, tmp_path):
+        from sentinel.dashboard import jobs
+        calls = []
+
+        class FakeSt:
+            session_state = {}
+            def success(self, *a, **k): calls.append(("success",))
+            def rerun(self, scope="fragment"): calls.append(("rerun", scope))
+            def button(self, *a, **k): return False
+
+        monkeypatch.setattr(jobs, "running", lambda path: None)
+        ctx = views.Context(conn=None, config=None, mode="light",
+                            db_path=tmp_path / "db.sqlite")
+        views._running_job_panel(FakeSt(), ctx, key="k")
+        assert ("rerun", "app") in calls, \
+            "a fragment-scoped rerun would redraw only the panel"
+        assert calls.index(("rerun", "app")) == 0
+
+
+class TestLinkedIdeaCards:
+    """"we don't need an open button — show the stock name as link": the
+    leaderboard chart and the card list said the same numbers twice, so the
+    cards absorbed the chart (meter bar with the 70 tick) and the name
+    became the way in via ?open=."""
+
+    def test_the_name_is_a_link_when_href_is_given(self):
+        card = ui.entity_card("Palantir <Tech>", href="?open=PLTR.US")
+        assert '<a class="sx-entity-link" href="?open=PLTR.US"' in card
+        assert 'target="_self"' in card, "a new tab would lose the session"
+        assert "Palantir &lt;Tech&gt;" in card
+        assert "<a" not in ui.entity_card("Palantir"), \
+            "no href must mean no anchor"
+
+    def test_the_meter_is_clamped_to_the_scale(self):
+        assert 'width:100%' in ui.entity_card("X", meter=120.0)
+        assert 'width:0%' in ui.entity_card("X", meter=-5.0)
+        assert 'width:73%' in ui.entity_card("X", meter=73.0)
+        assert "sx-entity-meter" not in ui.entity_card("X")
+
+    def test_opened_ticker_only_honours_listed_tickers(self):
+        class FakeSt:
+            query_params = {"open": "PLTR.US"}
+        assert views._opened_ticker(FakeSt, allowed={"PLTR.US"}) == "PLTR.US"
+        assert views._opened_ticker(FakeSt, allowed={"MSFT.US"}) is None
+        class Bare: pass
+        assert views._opened_ticker(Bare, allowed={"PLTR.US"}) is None
+
+    def test_no_open_buttons_remain_on_the_idea_surfaces(self):
+        source = pathlib.Path(views.__file__).read_text()
+        assert 'button("Open"' not in source
+        assert "?open=" in source
+
+
 class TestStopWatch:
     """The delayed stop-watch: the ONE use of intraday data — a ~15-min
     delayed price against each open position's stop, display-only. Scores
