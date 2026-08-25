@@ -68,9 +68,7 @@ def _table_twin(st, frame: pd.DataFrame, *, label: str = "Table view") -> None:
 
 
 def _section(st, title: str, subtitle: str | None = None) -> None:
-    st.markdown(f"#### {title}")
-    if subtitle:
-        st.markdown(f'<p class="sx-note">{subtitle}</p>', unsafe_allow_html=True)
+    st.markdown(ui.section(title, subtitle), unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------- 1. portfolio
@@ -84,7 +82,9 @@ def today(st, ctx: Context) -> None:
     best current ideas one click from their full reasoning. No term of art
     appears without a plain-English gloss.
     """
-    st.markdown("### Today")
+    st.markdown(ui.page_header(
+        "Today", dt.date.today().strftime("%A %d %B %Y")),
+        unsafe_allow_html=True)
     status = queries.today_status(ctx.conn, ctx.config.paths.briefs)
 
     row = st.columns(3, gap="small")
@@ -141,12 +141,11 @@ def today(st, ctx: Context) -> None:
             for idea_ in top:
                 line = st.columns([3, 1], gap="small")
                 name = queries.company_name(ctx.conn, idea_.ticker)
-                line[0].markdown(
-                    f"**{name or idea_.ticker}**  \n"
-                    f"<span style='opacity:.6'>{idea_.ticker} · "
-                    f"{idea_.composite_score:.0f}/100 · "
-                    f"{idea_.conviction.value} conviction</span>",
-                    unsafe_allow_html=True)
+                line[0].markdown(ui.entity_card(
+                    name or idea_.ticker, meta=(idea_.ticker,),
+                    score=float(idea_.composite_score),
+                    chip=f"{idea_.conviction.value} conviction",
+                ), unsafe_allow_html=True)
                 if line[1].button("Open", key=f"today-idea-{idea_.id}"):
                     st.session_state["today-open"] = idea_.ticker
 
@@ -162,8 +161,8 @@ def today(st, ctx: Context) -> None:
         for row in favourites:
             line = st.columns([3, 2, 2, 2, 2], gap="small")
             line[0].markdown(
-                f"**{row['name'] or row['ticker']}**  \n"
-                f"<span style='opacity:.6'>{row['ticker']}</span>",
+                f'<p class="sx-entity-name">{row["name"] or row["ticker"]}</p>'
+                f'<p class="sx-entity-meta">{row["ticker"]}</p>',
                 unsafe_allow_html=True)
             line[1].markdown("—" if row["last_close"] is None
                              else f"{row['last_close']:,.2f}")
@@ -628,14 +627,12 @@ def investments(st, ctx: Context) -> None:
     core is outside the system's scope by design — see sentinel.toml's
     header).
     """
-    st.markdown("### Investments")
-    st.markdown(
-        '<p class="sx-note">The long-term lane: ideas the system rates as '
-        "6-month-to-5-year holds, led by fundamentals — as opposed to the "
-        "1-8-week swing ideas the rest of the app trades. Same safety "
-        "gates, longer clock. Research output, not financial advice.</p>",
-        unsafe_allow_html=True,
-    )
+    st.markdown(ui.page_header(
+        "Investments",
+        "The long-term lane: ideas the system rates as 6-month-to-5-year "
+        "holds, led by fundamentals — as opposed to the 1-8-week swing ideas "
+        "the rest of the app trades. Same safety gates, longer clock. "
+        "Research output, not financial advice."), unsafe_allow_html=True)
 
     qualifying, _ = queries.conviction_board(
         ctx.conn, min_score=0, idea_class=IdeaClass.LONG_TERM)
@@ -666,12 +663,11 @@ def investments(st, ctx: Context) -> None:
             for idea_ in top:
                 line = st.columns([3, 1], gap="small")
                 name = queries.company_name(ctx.conn, idea_.ticker)
-                line[0].markdown(
-                    f"**{name or idea_.ticker}**  \n"
-                    f"<span style='opacity:.6'>{idea_.ticker} · "
-                    f"{idea_.composite_score:.0f}/100 · "
-                    f"{idea_.conviction.value} conviction</span>",
-                    unsafe_allow_html=True)
+                line[0].markdown(ui.entity_card(
+                    name or idea_.ticker, meta=(idea_.ticker,),
+                    score=float(idea_.composite_score),
+                    chip=f"{idea_.conviction.value} conviction",
+                ), unsafe_allow_html=True)
                 if line[1].button("Open", key=f"invest-idea-{idea_.id}"):
                     st.session_state["invest-open"] = idea_.ticker
 
@@ -1114,14 +1110,12 @@ STANCE_STATUS = {"BUY": "good", "HOLD": "warning", "AVOID": "critical", "NOT SCO
 
 
 def search(st, ctx: Context) -> None:
-    st.markdown("### Search")
-    st.markdown(
-        '<p class="sx-note">One ticker, what the system knows about it, and what it '
-        'decided. The verdict applies no threshold of its own — it reports decisions '
-        'the rules and risk layers already made, so this page cannot disagree with '
-        'the brief.</p>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(ui.page_header(
+        "Search",
+        "One stock, what the system knows about it, and what it decided. The "
+        "verdict applies no threshold of its own — it reports decisions the "
+        "rules and risk layers already made, so this page cannot disagree "
+        "with the brief."), unsafe_allow_html=True)
 
     options = queries.search_options(ctx.conn)
 
@@ -1199,11 +1193,10 @@ def _offer_name_lookup(st, ctx: Context, text: str) -> None:
         _running_job_panel(st, ctx, key="lookup-job")
     for match in matches:
         row = st.columns([4, 1], gap="small")
-        row[0].markdown(
-            f"**{match.name}**  \n"
-            f"<span style='opacity:.6'>{match.ticker} · {match.exchange}"
-            + (f" · {match.currency}" if match.currency else "") + "</span>",
-            unsafe_allow_html=True)
+        meta = (match.ticker, match.exchange) + (
+            (match.currency,) if match.currency else ())
+        row[0].markdown(ui.entity_card(match.name, meta=meta),
+                        unsafe_allow_html=True)
         if not ctx.writable or busy:
             continue
         if row[1].button("Fetch", key=f"lookup-{match.ticker}"):

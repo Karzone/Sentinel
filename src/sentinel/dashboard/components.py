@@ -24,6 +24,13 @@ from . import palette as pal
 STATUS_ICONS = {"good": "●", "warning": "▲", "serious": "▲", "critical": "■", "neutral": "—"}
 STATUS_WORDS = {"good": "OK", "warning": "Watch", "serious": "Serious", "critical": "Breach"}
 
+#: Display face for page chrome — titles, section headings, tile values.
+#: Loaded from Google Fonts with a real system fallback, so an offline
+#: session degrades to the body stack instead of a blank glyph box. CHARTS
+#: DELIBERATELY STAY on ``pal.FONT`` (the recorded rule in palette.py: no
+#: display face on a chart) — this constant must never reach theme_config.
+DISPLAY_FONT = '"Instrument Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+
 
 def shell_css(mode: str) -> str:
     """Page chrome for a mode.
@@ -34,7 +41,11 @@ def shell_css(mode: str) -> str:
     p = pal.get(mode)
     return f"""
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap');
   .stApp {{ background: {p.plane}; }}
+  /* A reading measure: full-bleed text lines on a wide monitor are the
+     cheapest tell of an unstyled page. Charts still stretch to this width. */
+  .block-container {{ max-width: 1180px; }}
   /* The Deploy button and the running-man widget are noise on a personal
      read-only dashboard. The toolbar itself STAYS: it holds Streamlit's theme
      setting, which is now the single control for light/dark. */
@@ -56,8 +67,45 @@ def shell_css(mode: str) -> str:
   [data-testid="stMarkdownContainer"] {{ color: {p.ink_secondary}; }}
   [data-testid="stIconMaterial"], .material-symbols-rounded,
   span[class*="material"] {{ font-family: "Material Symbols Rounded" !important; }}
-  .stApp h1, .stApp h2, .stApp h3, .stApp h4 {{ color: {p.ink}; font-family: {pal.FONT};
-      letter-spacing: -0.01em; }}
+  .stApp h1, .stApp h2, .stApp h3, .stApp h4 {{ color: {p.ink};
+      font-family: {DISPLAY_FONT}; letter-spacing: -0.01em; }}
+  /* Page + section anatomy. Hierarchy comes from weight and ink, sentence
+     case throughout — never tracked uppercase. */
+  /* Header classes carry .stApp + element in the selector: Streamlit styles
+     markdown h3/h4 through its own container rules, and a bare class loses
+     that specificity fight — the section titles rendered at Streamlit's h4
+     size. Caught in a screenshot. */
+  .stApp h3.sx-page-title {{ font-family: {DISPLAY_FONT}; font-size: 27px;
+      font-weight: 650; color: {p.ink}; letter-spacing: -0.015em; margin: 0;
+      line-height: 1.15; padding: 0; }}
+  .sx-page-sub {{ font-size: 13px; color: {p.ink_muted}; margin: 4px 0 0;
+      max-width: 72ch; line-height: 1.5; }}
+  .sx-section {{ margin: 2px 0 4px; }}
+  .sx-eyebrow {{ font-size: 11px; font-weight: 500; color: {p.ink_muted};
+      letter-spacing: 0.02em; margin: 0 0 2px; }}
+  .stApp h4.sx-sec-title {{ font-family: {DISPLAY_FONT}; font-size: 17px;
+      font-weight: 600; color: {p.ink}; letter-spacing: -0.01em; margin: 0;
+      line-height: 1.3; padding: 0; }}
+  .sx-sec-note {{ font-size: 12.5px; color: {p.ink_muted}; margin: 4px 0 0;
+      max-width: 72ch; line-height: 1.5; }}
+  /* One entity per card: name, then a quiet meta line where the numbers are
+     tabular so scores align down a list. */
+  .sx-entity {{ background: {p.surface}; border: 1px solid {p.border};
+      border-radius: 10px; padding: 10px 13px; margin: 0 0 8px; }}
+  .sx-entity:hover {{ background: {p.hover}; }}
+  .sx-entity-name {{ font-size: 14px; font-weight: 600; color: {p.ink};
+      margin: 0; line-height: 1.3; }}
+  .sx-entity-meta {{ display: flex; align-items: baseline; gap: 10px;
+      flex-wrap: wrap; font-size: 12px; color: {p.ink_muted}; margin: 3px 0 0;
+      font-variant-numeric: tabular-nums; }}
+  .sx-entity-score {{ font-weight: 650; font-size: 13px; color: {p.ink}; }}
+  .sx-chip {{ font-size: 10.5px; padding: 1px 8px; border-radius: 999px;
+      border: 1px solid {p.border}; color: {p.ink_secondary}; }}
+  .stButton button {{ border-radius: 8px; font-weight: 500; }}
+  @media (prefers-reduced-motion: no-preference) {{
+    .sx-entity {{ transition: background 0.12s ease; }}
+    .stButton button {{ transition: background 0.12s ease, border-color 0.12s ease; }}
+  }}
   [data-testid="stMetricValue"] {{ color: {p.ink}; }}
   .sx-card {{ background: {p.surface}; border: 1px solid {p.border}; border-radius: 10px;
       padding: 14px 16px; }}
@@ -66,9 +114,9 @@ def shell_css(mode: str) -> str:
   .sx-tile-label {{ font-size: 11px; color: {p.ink_muted}; text-transform: none;
       margin: 0 0 2px; }}
   .sx-tile-value {{ font-size: 26px; line-height: 1.15; font-weight: 600; color: {p.ink};
-      margin: 0; font-variant-numeric: proportional-nums; }}
+      margin: 0; font-variant-numeric: proportional-nums; font-family: {DISPLAY_FONT}; }}
   .sx-hero {{ font-size: 48px; line-height: 1.05; font-weight: 600; color: {p.ink};
-      margin: 0; font-variant-numeric: proportional-nums; }}
+      margin: 0; font-variant-numeric: proportional-nums; font-family: {DISPLAY_FONT}; }}
   .sx-tile-delta {{ font-size: 12px; margin: 3px 0 0; }}
   .sx-verdict {{ border-left: 4px solid {p.border}; background: {p.surface};
       border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 4px 0 6px; }}
@@ -139,6 +187,42 @@ def status_for_age(age_days: int) -> str:
     if age_days <= 1:
         return "good"
     return "warning" if age_days <= 4 else "critical"
+
+def page_header(title: str, subtitle: str | None = None) -> str:
+    """The page's name and its one-sentence promise, as one block."""
+    sub = (f'<p class="sx-page-sub">{html.escape(subtitle)}</p>' if subtitle else "")
+    return (f'<div class="sx-section"><h3 class="sx-page-title">'
+            f"{html.escape(title)}</h3>{sub}</div>")
+
+
+def section(title: str, note: str | None = None, *, eyebrow: str | None = None) -> str:
+    """Section anatomy: optional eyebrow, title, then a measured note.
+
+    The note is part of the component, not a separate caption, for the same
+    reason verdict_banner fuses stance and reason: a later layout change
+    must not strand a heading from the sentence that qualifies it.
+    """
+    brow = (f'<p class="sx-eyebrow">{html.escape(eyebrow)}</p>' if eyebrow else "")
+    body = (f'<p class="sx-sec-note">{html.escape(note)}</p>' if note else "")
+    return (f'<div class="sx-section">{brow}'
+            f'<h4 class="sx-sec-title">{html.escape(title)}</h4>{body}</div>')
+
+
+def entity_card(name: str, *, meta: tuple[str, ...] = (), score: float | None = None,
+                chip: str | None = None) -> str:
+    """One stock in a list: name, quiet tabular meta, the score emphasised,
+    conviction (or any qualifier) as a chip. Replaces the ad-hoc
+    markdown-with-opacity rows the idea lists used to draw."""
+    parts = [f"<span>{html.escape(item)}</span>" for item in meta]
+    if score is not None:
+        parts.append(f'<span class="sx-entity-score">{score:.0f}'
+                     f"<span style='font-weight:400'>/100</span></span>")
+    if chip:
+        parts.append(f'<span class="sx-chip">{html.escape(chip)}</span>')
+    meta_html = (f'<p class="sx-entity-meta">{"".join(parts)}</p>' if parts else "")
+    return (f'<div class="sx-entity"><p class="sx-entity-name">'
+            f"{html.escape(name)}</p>{meta_html}</div>")
+
 
 def verdict_banner(stance: str, headline: str, *, status: str | None = None,
                    mode: str = "light") -> str:

@@ -55,6 +55,8 @@ class Palette:
     grid: str
     axis: str
     border: str
+    #: List-row hover wash — a whisper off the surface, never a repaint.
+    hover: str = "rgba(11,11,11,0.035)"
 
     #: Reserved. Never used for "series 5", and never carried alone — every
     #: status colour ships with an icon and a label.
@@ -112,6 +114,7 @@ DARK = Palette(
     grid="#2c2c2a",
     axis="#383835",
     border="rgba(255,255,255,0.10)",
+    hover="rgba(255,255,255,0.045)",
     status=_STATUS,
 )
 

@@ -287,6 +287,15 @@ Recorded so the gaps are known rather than discovered.
   because a status colour never carries meaning alone; an AVOID/HOLD chart carries no levels, same
   policy as the plan tiles. Both price charts title themselves with the stock's name and ticker, so
   a screenshot or scroll position that has lost the page header still names its subject.
+  Page chrome has a component anatomy (`components.py`): `page_header` (title + one-sentence
+  promise), `section` (optional eyebrow, title, measured note — fused so a layout change cannot
+  strand a heading from its qualifier), and `entity_card` (one stock per card: name, quiet
+  tabular meta, score emphasised as n/100, conviction as a chip) replace raw markdown headers
+  and opacity-span rows. Titles and tile values wear the display face (`DISPLAY_FONT`,
+  Instrument Sans with a real system fallback); CHARTS DELIBERATELY STAY on `pal.FONT` — the
+  recorded no-display-face-on-charts rule, asserted by a test. Hierarchy comes from weight and
+  ink, sentence case throughout (no tracked uppercase — also asserted); hover/button motion is
+  gated behind `prefers-reduced-motion`; content is capped at a 1180px reading measure.
 - **Alpaca paper API.** The internal simulated ledger covers both UK and US names; the Alpaca
   integration the spec mentions for US names is not wired.
 - **Reddit / StockTwits sentiment.** The sentiment module accepts arbitrary text via `extra_texts`,

@@ -1611,3 +1611,42 @@ class TestInvestmentsLane:
         names = [name for name, _ in views.PAGES]
         assert "Investments" in names
         assert "Investments" in views.NAV_GROUPS["Every day"]
+
+
+class TestDesignComponents:
+    """The section/header/card anatomy that replaced raw markdown headers and
+    opacity-span rows — plus the two rules that keep the type system honest."""
+
+    def test_section_fuses_title_and_note_and_escapes(self):
+        block = ui.section("Best <ideas>", "The top five & why.")
+        assert "Best &lt;ideas&gt;" in block and "The top five &amp; why." in block
+        assert "sx-sec-title" in block and "sx-sec-note" in block
+
+    def test_page_header_carries_its_subtitle(self):
+        block = ui.page_header("Today", "Tuesday 25 August 2026")
+        assert "sx-page-title" in block and "Tuesday 25 August 2026" in block
+
+    def test_entity_card_shows_score_out_of_100_and_a_chip(self):
+        card = ui.entity_card("NVIDIA Corp", meta=("NVDA.US",),
+                              score=82.4, chip="high conviction")
+        assert "82" in card and "/100" in card
+        assert "high conviction" in card and "NVDA.US" in card
+
+    def test_the_shell_loads_the_display_face_with_motion_gated(self):
+        for mode in ("light", "dark"):
+            css = ui.shell_css(mode)
+            assert "Instrument+Sans" in css, "display face import missing"
+            assert "prefers-reduced-motion" in css, "animation is ungated"
+            assert ".sx-eyebrow" in css and ".sx-entity" in css
+
+    def test_charts_stay_on_the_system_stack(self):
+        """palette.py's recorded rule: no display face on a chart. The
+        DISPLAY_FONT constant must never leak into the chart font."""
+        assert "Instrument" not in pal.FONT
+        assert "Instrument" not in str(pal.theme_config("light"))
+
+    def test_no_tracked_uppercase_labels(self):
+        """Hierarchy comes from weight and ink; tracked uppercase reads as
+        template output."""
+        for mode in ("light", "dark"):
+            assert "text-transform: uppercase" not in ui.shell_css(mode)
