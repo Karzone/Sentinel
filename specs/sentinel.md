@@ -262,7 +262,13 @@ Recorded so the gaps are known rather than discovered.
   bigger, and the frame is fetched with +50 rows of lookback so the averages are computed
   BEFORE the display cut (cut first and a 1-month window shows its 20-day average on the last
   two candles only, its 50-day never). Both detail charts run at `DETAIL_CHART_HEIGHT`, taller
-  than the dashboard default. The Today page leads with a top-five leaderboard of
+  than the dashboard default. The Today page's report tile asks "does a brief exist for the
+  LATEST CLOSE we hold?" (`today_status.brief_current`), never "is there a file named after
+  today?" — `sentinel brief` files its report by the close it reports on (as_of), which in an
+  EOD system is almost never the calendar date of the morning it runs, so the calendar check
+  showed "not yet" over a report written minutes earlier. When ready, the tile names the close
+  it covers; a brief older than the newest ingested close reads as not-ready (stale), which is
+  the honest direction. The Today page leads with a top-five leaderboard of
   accepted ideas (`score_leaders`): same rules-AND-risk gate as the Conviction board via
   `top_ideas_frame`, one hue on a full 0–100 scale, with a reference rule at the digest's
   notable-70 bar. Search accepts company names as well as tickers: known stocks are

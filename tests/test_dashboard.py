@@ -1086,7 +1086,7 @@ class TestTodayStatus:
         status = queries.today_status(conn, tmp_path)
         assert status["tickers"] == 0
         assert status["last_bar"] is None
-        assert status["brief_today"] is False
+        assert status["brief_current"] is False
         assert status["open_positions"] == 0
 
     def test_fresh_data_and_todays_brief_are_recognised(self, conn, tmp_path):
@@ -1102,12 +1102,40 @@ class TestTodayStatus:
         status = queries.today_status(conn, tmp_path)
         assert status["last_bar"] == today
         assert status["data_age_days"] == 0
-        assert status["brief_today"] is True
+        assert status["brief_current"] is True
 
-    def test_yesterdays_brief_does_not_count_as_todays(self, conn, tmp_path):
-        yesterday = dt.date.today() - dt.timedelta(days=1)
-        (tmp_path / f"{yesterday.isoformat()}.md").write_text("# old")
-        assert queries.today_status(conn, tmp_path)["brief_today"] is False
+    def test_a_brief_on_the_latest_close_is_ready_whatever_todays_date_is(
+            self, conn, tmp_path):
+        """The live bug: `sentinel brief` files its report by the close it
+        reports on (as_of), which in an EOD system is almost never the
+        calendar date of the morning it runs. The tile compared against
+        dt.date.today() and said "not yet" over a report written minutes
+        earlier."""
+        from decimal import Decimal as D
+        from sentinel.domain.models import Bar
+
+        close = dt.date.today() - dt.timedelta(days=1)
+        repo.save_bars(conn, [Bar(ticker="A.US", date=close, open=D("1"),
+                                  high=D("1"), low=D("1"), close=D("1"),
+                                  adjusted_close=D("1"), volume=1,
+                                  currency="USD")], source="t")
+        (tmp_path / f"{close.isoformat()}.md").write_text("# brief")
+        assert queries.today_status(conn, tmp_path)["brief_current"] is True
+
+    def test_a_brief_older_than_the_latest_close_is_stale(self, conn, tmp_path):
+        """New ingest brought a newer close than the last brief covers: the
+        report on screen would not include it, so the tile must say so."""
+        from decimal import Decimal as D
+        from sentinel.domain.models import Bar
+
+        close = dt.date.today() - dt.timedelta(days=1)
+        repo.save_bars(conn, [Bar(ticker="A.US", date=close, open=D("1"),
+                                  high=D("1"), low=D("1"), close=D("1"),
+                                  adjusted_close=D("1"), volume=1,
+                                  currency="USD")], source="t")
+        stale = close - dt.timedelta(days=1)
+        (tmp_path / f"{stale.isoformat()}.md").write_text("# old")
+        assert queries.today_status(conn, tmp_path)["brief_current"] is False
 
     def test_a_position_below_its_stop_is_counted_as_trouble(self, conn, tmp_path):
         from decimal import Decimal as D

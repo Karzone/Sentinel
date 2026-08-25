@@ -776,8 +776,13 @@ def today_status(conn: sqlite3.Connection, briefs_dir: str | Path) -> dict[str, 
             last_bar = candidate
     data_age = (today - last_bar).days if last_bar else None
 
-    brief_today = any(
-        path.name == f"{today.isoformat()}.md" for path in list_reports(briefs_dir)
+    # The brief is FILED BY THE CLOSE IT REPORTS ON (`sentinel brief` writes
+    # f"{as_of}.md"), and an EOD system's as_of is almost never the calendar
+    # date of the morning it runs — checking for f"{today}.md" here made the
+    # tile say "not yet" over a report written minutes earlier. "Today's
+    # report" means: a brief exists for the latest close we hold.
+    brief_current = last_bar is not None and any(
+        path.name == f"{last_bar.isoformat()}.md" for path in list_reports(briefs_dir)
     )
 
     positions = positions_frame(conn)
@@ -791,7 +796,7 @@ def today_status(conn: sqlite3.Connection, briefs_dir: str | Path) -> dict[str, 
         "tickers": len(tickers),
         "last_bar": last_bar,
         "data_age_days": data_age,
-        "brief_today": brief_today,
+        "brief_current": brief_current,
         "open_positions": 0 if positions.empty else len(positions),
         "positions_below_stop": trouble,
     }

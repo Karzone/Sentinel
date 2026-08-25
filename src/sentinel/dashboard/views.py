@@ -103,10 +103,11 @@ def today(st, ctx: Context) -> None:
             ), unsafe_allow_html=True)
     with row[1]:
         st.markdown(ui.tile(
-            "Today's report", "ready" if status["brief_today"] else "not yet",
-            delta=("open the Reports page" if status["brief_today"]
+            "Today's report", "ready" if status["brief_current"] else "not yet",
+            delta=(f"on the {status['last_bar']} close — open the Reports page"
+                   if status["brief_current"]
                    else "run it below, or wait for the 7am schedule"),
-            delta_status=None if status["brief_today"] else "warning",
+            delta_status=None if status["brief_current"] else "warning",
             mode=ctx.mode,
         ), unsafe_allow_html=True)
     with row[2]:
