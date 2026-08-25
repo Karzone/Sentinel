@@ -664,14 +664,16 @@ def ohlc_frame(conn: sqlite3.Connection, ticker: str, *, days: int = 130) -> pd.
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=columns)
 
 
-def top_ideas_frame(conn: sqlite3.Connection, *, limit: int = 5) -> pd.DataFrame:
+def top_ideas_frame(conn: sqlite3.Connection, *, limit: int = 5,
+                    idea_class: IdeaClass | None = None) -> pd.DataFrame:
     """The Today page's leaderboard: the strongest ACCEPTED ideas, best first.
 
     Built on `conviction_board` rather than a fresh query, so the leaderboard
     can never show a ticker the Conviction page would refuse — same
-    rules-AND-risk gate, same latest-per-ticker collapse.
+    rules-AND-risk gate, same latest-per-ticker collapse. `idea_class`
+    narrows it to one lane (the Investments page shows long_term only).
     """
-    qualifying, _ = conviction_board(conn, min_score=0)
+    qualifying, _ = conviction_board(conn, min_score=0, idea_class=idea_class)
     rows = [
         {
             "ticker": i.ticker,
@@ -687,7 +689,8 @@ def top_ideas_frame(conn: sqlite3.Connection, *, limit: int = 5) -> pd.DataFrame
 
 
 def conviction_board(
-    conn: sqlite3.Connection, *, min_score: int = 80, days: int = 14
+    conn: sqlite3.Connection, *, min_score: int = 80, days: int = 14,
+    idea_class: IdeaClass | None = None,
 ) -> tuple[list[Idea], Idea | None]:
     """(qualifying ideas, best near-miss).
 
@@ -709,6 +712,7 @@ def conviction_board(
     accepted = [
         idea_ for idea_ in latest.values()
         if not idea_.rejected_by_rules and risk.get(idea_.id) is True
+        and (idea_class is None or idea_.idea_class == idea_class)
     ]
     accepted.sort(key=lambda i: i.composite_score, reverse=True)
     qualifying = [i for i in accepted if i.composite_score >= min_score]

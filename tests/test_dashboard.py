@@ -1573,3 +1573,41 @@ class TestCandleWindow:
         sma50 = [r for r in melted if r["series"] == "SMA 50"]
         assert len(sma20) == 22, "SMA 20 should cover every displayed candle"
         assert len(sma50) == 22, "SMA 50 should cover every displayed candle"
+
+
+class TestInvestmentsLane:
+    """The Investments page shows ONLY the long-term idea class — the lane
+    that already existed in the domain model but that every surface mixed
+    into the swing feed."""
+
+    def _make(self, conn, ticker, score, klass):
+        helper = TestConvictionBoard()
+        idea = helper._idea(ticker, score).model_copy(
+            update={"idea_class": klass})
+        repo.save_idea(conn, idea)
+        helper._approve(conn, idea)
+        return idea
+
+    def test_the_board_narrows_to_one_idea_class(self, conn):
+        from sentinel.domain.enums import IdeaClass
+
+        self._make(conn, "L.US", 80, IdeaClass.LONG_TERM)
+        self._make(conn, "S.US", 90, IdeaClass.SWING)
+        qualifying, _ = queries.conviction_board(
+            conn, min_score=0, idea_class=IdeaClass.LONG_TERM)
+        assert [i.ticker for i in qualifying] == ["L.US"], (
+            "a swing idea leaked into the long-term lane")
+
+    def test_the_leaderboard_frame_respects_the_lane(self, conn):
+        from sentinel.domain.enums import IdeaClass
+
+        self._make(conn, "L.US", 80, IdeaClass.LONG_TERM)
+        self._make(conn, "S.US", 90, IdeaClass.SWING)
+        frame = queries.top_ideas_frame(conn, limit=5,
+                                        idea_class=IdeaClass.LONG_TERM)
+        assert list(frame["ticker"]) == ["L.US"]
+
+    def test_the_page_exists_and_is_reachable_from_the_nav(self):
+        names = [name for name, _ in views.PAGES]
+        assert "Investments" in names
+        assert "Investments" in views.NAV_GROUPS["Every day"]

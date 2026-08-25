@@ -268,7 +268,14 @@ Recorded so the gaps are known rather than discovered.
   EOD system is almost never the calendar date of the morning it runs, so the calendar check
   showed "not yet" over a report written minutes earlier. When ready, the tile names the close
   it covers; a brief older than the newest ingested close reads as not-ready (stale), which is
-  the honest direction. The Today page leads with a top-five leaderboard of
+  the honest direction. The Investments page is the long-term lane on its own surface:
+  `conviction_board`/`top_ideas_frame` take an optional `idea_class` filter and the page shows
+  ONLY `IdeaClass.LONG_TERM` ideas (6 months–5 years, fundamentals-led) through the same
+  rules-AND-risk gate — never a separate scoring path. Its empty states distinguish "nothing
+  scored yet" from "everything accepted today is swing", and the page states its two limits in
+  the UI: the universe is the WATCHLIST (configured universe + Search fetches), not an index
+  scan; and funds/the passive core stay out of scope by design (sentinel.toml's header —
+  satellite capital only). The Today page leads with a top-five leaderboard of
   accepted ideas (`score_leaders`): same rules-AND-risk gate as the Conviction board via
   `top_ideas_frame`, one hue on a full 0–100 scale, with a reference rule at the digest's
   notable-70 bar. Search accepts company names as well as tickers: known stocks are

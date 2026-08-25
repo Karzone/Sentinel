@@ -22,6 +22,7 @@ import pandas as pd
 
 from .. import DISCLAIMER
 from ..config import Config
+from ..domain.enums import IdeaClass
 from . import charts, components as ui, palette as pal, queries
 
 
@@ -613,6 +614,92 @@ def _offer_fetch(st, ctx: Context, ticker: str) -> None:
             _start_job(st, ctx, "ingest", ["--tickers", ticker, "--history", "800"],
                        note="When the fetch finishes, come back and press "
                             "“Score this ticker”.")
+
+
+def investments(st, ctx: Context) -> None:
+    """The long-term lane, on its own page.
+
+    The pipeline already keeps two idea classes deliberately separate —
+    long_term (6 months to 5 years, fundamentals-led) and swing (1-8 weeks,
+    technicals + catalyst-led) — but every surface mixed them, so the whole
+    app read as a trading tool. This page shows ONLY the long-term class,
+    and is honest about the two things it is not: a market scanner (the
+    universe is the watchlist, not an index) and a fund picker (the passive
+    core is outside the system's scope by design — see sentinel.toml's
+    header).
+    """
+    st.markdown("### Investments")
+    st.markdown(
+        '<p class="sx-note">The long-term lane: ideas the system rates as '
+        "6-month-to-5-year holds, led by fundamentals — as opposed to the "
+        "1-8-week swing ideas the rest of the app trades. Same safety "
+        "gates, longer clock. Research output, not financial advice.</p>",
+        unsafe_allow_html=True,
+    )
+
+    qualifying, _ = queries.conviction_board(
+        ctx.conn, min_score=0, idea_class=IdeaClass.LONG_TERM)
+    _section(st, "Long-term ideas the system rates now",
+             "Every idea here passed the rules and risk gates AND is classed "
+             "long-term. The score is out of 100; conviction is the system's "
+             "own confidence in its reasoning.")
+    if not qualifying:
+        any_accepted, _ = queries.conviction_board(ctx.conn, min_score=0)
+        if any_accepted:
+            st.info("Every accepted idea right now is a short-term swing — "
+                    "nothing is currently classed as a long-term hold. That "
+                    "is a fact about today's scoring, not a verdict on the "
+                    "stocks.", icon="⏳")
+        else:
+            st.info("No scored ideas yet. Fetch data and run the report from "
+                    "the Today page — long-term ideas then appear here.",
+                    icon="🌱")
+    else:
+        top = qualifying[:10]
+        leaders = queries.top_ideas_frame(ctx.conn, limit=10,
+                                          idea_class=IdeaClass.LONG_TERM)
+        chart_col, list_col = st.columns([3, 2], gap="large")
+        with chart_col:
+            _chart(st, charts.score_leaders(leaders, ctx.mode),
+                   key="invest-top")
+        with list_col:
+            for idea_ in top:
+                line = st.columns([3, 1], gap="small")
+                name = queries.company_name(ctx.conn, idea_.ticker)
+                line[0].markdown(
+                    f"**{name or idea_.ticker}**  \n"
+                    f"<span style='opacity:.6'>{idea_.ticker} · "
+                    f"{idea_.composite_score:.0f}/100 · "
+                    f"{idea_.conviction.value} conviction</span>",
+                    unsafe_allow_html=True)
+                if line[1].button("Open", key=f"invest-idea-{idea_.id}"):
+                    st.session_state["invest-open"] = idea_.ticker
+
+    opened = st.session_state.get("invest-open")
+    if opened:
+        st.divider()
+        _ticker_detail(st, ctx, opened)
+
+    st.divider()
+    _section(st, "What this page deliberately is not",
+             "Two honest limits, so the empty spaces read as design rather "
+             "than failure.")
+    st.markdown(
+        f"""
+- **Not a market scanner.** The system analyses its **watchlist** — the
+  configured universe plus anything you fetched via Search — currently
+  **{queries.today_status(ctx.conn, ctx.config.paths.briefs)['tickers']}
+  stocks**, not the S&P 500 or the whole market. A great company it has
+  never ingested is invisible to it. To consider a stock, search it by name
+  and press Fetch; it joins every future scoring run.
+- **Not a fund picker.** This app manages only the **satellite** slice of a
+  portfolio — the 10-20% used for individual stock ideas. The **core**
+  (broad, low-cost index funds held for decades) is outside its scope on
+  purpose: choosing a core fund is a once-in-years decision that needs no
+  weekly research loop, and a system that scores stocks daily would only add
+  noise to it. The one principle worth stating: the core is where most
+  long-term return comes from, and it is boring by design.
+""")
 
 
 def reports(st, ctx: Context) -> None:
@@ -1428,12 +1515,13 @@ def _stat_tiles(st, ctx: Context, stats: dict) -> None:
 #: Sidebar grouping: the three pages a beginner lives in, then everything
 #: else under one label. PAGES stays flat for anything that iterates it.
 NAV_GROUPS = {
-    "Every day": ["Today", "Search", "Portfolio"],
+    "Every day": ["Today", "Search", "Investments", "Portfolio"],
     "Under the hood": ["Conviction", "Risk", "Ideas", "Evals", "Data health", "Reports"],
 }
 
 PAGES = [
     ("Today", today),
+    ("Investments", investments),
     ("Portfolio", portfolio),
     ("Conviction", conviction),
     ("Risk", risk),
