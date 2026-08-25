@@ -46,6 +46,11 @@ def main() -> None:
     mode = _mode()
     pal.enable(mode)
     st.markdown(ui.shell_css(mode), unsafe_allow_html=True)
+    # The brand sits ABOVE the nav, where st.navigation itself cannot put
+    # content — `with st.sidebar:` blocks always land below it. One SVG serves
+    # both themes: the mark is the series blue, the word the mode-shared muted
+    # ink, both validated against either surface.
+    st.logo(str(Path(__file__).parent / "assets" / "wordmark.svg"), size="large")
 
     decision = auth.gate(st)
     if not decision.may_render:
@@ -54,10 +59,6 @@ def main() -> None:
     config = load_config(os.environ.get("SENTINEL_CONFIG"))
     db_path = Path(os.environ.get("SENTINEL_DB") or config.paths.db)
 
-    with st.sidebar:
-        st.markdown("### Sentinel")
-        st.caption("Read-only research dashboard")
-        st.divider()
 
     try:
         conn = queries_connect(db_path)
@@ -108,6 +109,7 @@ def main() -> None:
         notice = st.session_state.get("_auth_notice")
         if notice:
             st.warning(notice, icon="🔓")
+        st.caption("Read-only research dashboard")
         st.caption(f"Database `{db_path}`")
         st.caption(f"Satellite capital £{float(config.satellite_capital_gbp):,.0f}")
         st.caption(f"sentinel {__version__}")

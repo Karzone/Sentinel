@@ -47,6 +47,20 @@ class Context:
 CANDLE_WINDOWS: dict[str, int] = {
     "1 month": 22, "3 months": 66, "6 months": 130,
 }
+#: The Investments page opens the same detail view on an investor's clock:
+#: longer windows, and the 50/200-day average pair instead of the swing 20/50.
+#: A 6-month-to-5-year hold is traded on the long trend, so showing it the
+#: 20-day line would answer a question it didn't ask.
+INVEST_CANDLE_WINDOWS: dict[str, int] = {
+    "6 months": 130, "1 year": 261, "2 years": 522,
+}
+#: (window map, SMA pair) per horizon. The lookback fetched before the display
+#: cut is always the longest SMA of the pair, so the averages are fully formed
+#: from the first displayed candle whenever the store holds enough history.
+CANDLE_HORIZONS: dict[str, tuple[dict[str, int], tuple[int, int]]] = {
+    "swing": (CANDLE_WINDOWS, (20, 50)),
+    "invest": (INVEST_CANDLE_WINDOWS, (50, 200)),
+}
 #: The detail page's price charts run taller than the default dashboard
 #: chart: they are the page's centrepiece, not a panel in a grid.
 DETAIL_CHART_HEIGHT = 380
@@ -674,7 +688,7 @@ def investments(st, ctx: Context) -> None:
     opened = st.session_state.get("invest-open")
     if opened:
         st.divider()
-        _ticker_detail(st, ctx, opened)
+        _ticker_detail(st, ctx, opened, horizon="invest")
 
     st.divider()
     _section(st, "What this page deliberately is not",
@@ -1319,7 +1333,7 @@ def _trade_plan(st, ctx: Context, ticker: str) -> None:
         )
 
 
-def _ticker_detail(st, ctx: Context, ticker: str) -> None:
+def _ticker_detail(st, ctx: Context, ticker: str, *, horizon: str = "swing") -> None:
     # WHO this is, before anything else — two screenshots into a review, the
     # owner could not tell which stock the page was talking about.
     name = queries.company_name(ctx.conn, ticker)
@@ -1387,19 +1401,26 @@ def _ticker_detail(st, ctx: Context, ticker: str) -> None:
         help="Candles show each day's open, high, low and close; trend lines "
              "show the adjusted close against the long moving averages.",
     )
+    windows, sma_pair = CANDLE_HORIZONS[horizon]
     if style.startswith("Daily candles"):
         window = st.radio(
-            "Window", list(CANDLE_WINDOWS), index=1, horizontal=True,
-            key=f"candle-window-{ticker}",
+            "Window", list(windows), index=1, horizontal=True,
+            key=f"candle-window-{ticker}-{horizon}",
             help="How far back the candles go. Shorter windows draw bigger "
                  "candles — the data is daily either way; there is no "
                  "intraday feed.",
         )
         subtitle = ("Each candle is one trading day: the body runs open→close "
                     "(blue closed higher, red closed lower), the thin wick spans "
-                    "the day's low→high. The lines are the 20 and 50-day "
-                    "averages — price above a rising average is trend support, "
-                    "not a promise. Hover a candle for its exact numbers.")
+                    f"the day's low→high. The lines are the {sma_pair[0]} and "
+                    f"{sma_pair[1]}-day averages — price above a rising average "
+                    "is trend support, not a promise. Hover a candle for its "
+                    "exact numbers.")
+        if horizon == "invest":
+            subtitle += (" This is the long-term read: the 50/200-day pair is "
+                         "the trend an investor holds through, not a trade "
+                         "signal. An average starts drawing once enough "
+                         "history precedes it.")
         # The trade plan drawn on the chart itself — but ONLY under a BUY
         # verdict, same policy as the plan tiles: levels under an AVOID would
         # read as a wink to ignore it.
@@ -1412,16 +1433,16 @@ def _ticker_detail(st, ctx: Context, ticker: str) -> None:
         # The identity rides ON the chart: a scroll position (or screenshot)
         # that has lost the page header must still say whose candles these are.
         chart_title = f"{name} ({ticker})" if name else ticker
-        # +50 rows of lookback (the longest SMA) so the averages are fully
+        # Lookback of the longest SMA in the pair, so the averages are fully
         # formed from the first displayed candle; the chart cuts the display
         # back down after computing them.
         ohlc = queries.ohlc_frame(ctx.conn, ticker,
-                                  days=CANDLE_WINDOWS[window] + 50)
+                                  days=windows[window] + max(sma_pair))
         _chart(st, charts.candlestick(
             ohlc, ctx.mode, title=chart_title, height=DETAIL_CHART_HEIGHT,
-            display_days=CANDLE_WINDOWS[window],
+            sma=sma_pair, display_days=windows[window],
             levels=_levels_frame(levels) if levels is not None else None,
-        ), key=f"candles-{ticker}")
+        ), key=f"candles-{ticker}-{horizon}")
         _table_twin(st, ohlc.tail(60))
     else:
         _section(st, "Price — trend",

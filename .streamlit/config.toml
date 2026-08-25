@@ -5,7 +5,12 @@
 # ProgressColumn and widgets paint with primaryColor. Its default is red, which
 # on a "distance to stop" bar reads as danger when a long bar is the safe case.
 primaryColor = "#2a78d6"
-font = "sans serif"
+# The dashboard's display face, loaded by shell_css's Google Fonts import.
+# Streamlit sets font-family explicitly on its own widgets, so the CSS root
+# inheritance alone leaves buttons/inputs/nav on the stock face. Charts are
+# untouched: Vega reads its fonts from palette.theme_config (pal.FONT).
+font = '"Instrument Sans", system-ui, "Segoe UI", sans-serif'
+
 
 [server]
 headless = true

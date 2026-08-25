@@ -295,7 +295,22 @@ Recorded so the gaps are known rather than discovered.
   Instrument Sans with a real system fallback); CHARTS DELIBERATELY STAY on `pal.FONT` — the
   recorded no-display-face-on-charts rule, asserted by a test. Hierarchy comes from weight and
   ink, sentence case throughout (no tracked uppercase — also asserted); hover/button motion is
-  gated behind `prefers-reduced-motion`; content is capped at a 1180px reading measure.
+  gated behind `prefers-reduced-motion`; content is capped at a 1180px reading measure
+  (selector also names the 1.62 `stMainBlockContainer` test-id — the bare class alone stopped
+  matching). The display face carries the WHOLE app, not only headings: the CSS root sets it,
+  and Streamlit's own widgets get it via the theme font (`.streamlit/config.toml` for repo-root
+  launches, `STREAMLIT_THEME_FONT` set by `sentinel dashboard` for any cwd) — with only the
+  headers switched the app still read as stock Streamlit. A test asserts config.toml and
+  shell_css name the same family, so the config can never point at a face the page never
+  loads. The sidebar is a designed rail: `st.logo` puts the ◐ wordmark
+  (`dashboard/assets/wordmark.svg`, one SVG whose series-blue mark + mode-shared muted ink
+  read on both themes) ABOVE the nav where `with st.sidebar:` content cannot reach; nav group
+  labels are quiet captions and the current page is marked by weight plus an inset accent bar —
+  never colour alone. The Investments open runs the ticker detail on an investor's clock
+  (`CANDLE_HORIZONS`): candle windows 6 months/1 year/2 years and the 50/200-day SMA pair,
+  where every other surface keeps the swing 20/50 over 1/3/6 months. The lookback fetched
+  before the display cut is always the longest SMA of the horizon's pair; when the store holds
+  less history than window+200 the long average starts partway in and the caption says so.
 - **Alpaca paper API.** The internal simulated ledger covers both UK and US names; the Alpaca
   integration the spec mentions for US names is not wired.
 - **Reddit / StockTwits sentiment.** The sentiment module accepts arbitrary text via `extra_texts`,

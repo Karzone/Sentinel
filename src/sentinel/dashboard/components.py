@@ -45,7 +45,8 @@ def shell_css(mode: str) -> str:
   .stApp {{ background: {p.plane}; }}
   /* A reading measure: full-bleed text lines on a wide monitor are the
      cheapest tell of an unstyled page. Charts still stretch to this width. */
-  .block-container {{ max-width: 1180px; }}
+  .block-container, [data-testid="stMainBlockContainer"] {{
+      max-width: 1180px; margin-inline: auto; }}
   /* The Deploy button and the running-man widget are noise on a personal
      read-only dashboard. The toolbar itself STAYS: it holds Streamlit's theme
      setting, which is now the single control for light/dark. */
@@ -57,12 +58,32 @@ def shell_css(mode: str) -> str:
   .block-container {{ padding-top: 2.4rem; }}
   section[data-testid="stSidebar"] {{ background: {p.surface};
       border-right: 1px solid {p.border}; }}
-  /* Colour broadly, but set the family on the ROOT ONLY and let it inherit.
-     A blanket `.stApp span {{ font-family }}` also hits Streamlit's Material
-     Symbols icon spans, and once the icon loses its font the ligature cannot
+  /* Sidebar nav: group labels as quiet sentence-case captions, links as soft
+     rows, and the current page marked by weight + an accent bar — never by
+     colour alone. */
+  [data-testid="stNavSectionHeader"] {{ font-size: 11.5px; font-weight: 600;
+      color: {p.ink_muted}; letter-spacing: 0.01em; }}
+  [data-testid="stSidebarNavLink"] {{ border-radius: 8px;
+      padding: 2px 10px; margin: 1px 0; }}
+  /* The link text is a <p> nested inside the span — a span-level rule never
+     reaches it (checked against the live 1.62 DOM). */
+  [data-testid="stSidebarNavLink"] p {{ font-size: 13.5px;
+      color: {p.ink_secondary}; }}
+  [data-testid="stSidebarNavLink"]:hover {{ background: {p.hover}; }}
+  [data-testid="stSidebarNavLink"][aria-current="page"] {{
+      background: {p.hover}; box-shadow: inset 3px 0 0 {p.series[0]}; }}
+  [data-testid="stSidebarNavLink"][aria-current="page"] p {{
+      color: {p.ink}; font-weight: 600; }}
+  /* The display face carries the WHOLE page, not just headings — with only
+     the headers switched, the app still read as stock Streamlit (owner
+     feedback, 2026-08-25). Charts are unaffected: Vega sets its fonts from
+     theme_config, which stays on pal.FONT by the recorded palette rule.
+     Set the family on the ROOT ONLY and let it inherit. A blanket
+     `.stApp span {{ font-family }}` also hits Streamlit's Material Symbols
+     icon spans, and once the icon loses its font the ligature cannot
      resolve — every expander chevron rendered as the literal text
      "arrow_right" on top of its own label. Caught in a screenshot. */
-  .stApp {{ font-family: {pal.FONT}; }}
+  .stApp {{ font-family: {DISPLAY_FONT}; }}
   .stApp p, .stApp li, .stApp label,
   [data-testid="stMarkdownContainer"] {{ color: {p.ink_secondary}; }}
   [data-testid="stIconMaterial"], .material-symbols-rounded,
@@ -105,6 +126,7 @@ def shell_css(mode: str) -> str:
   @media (prefers-reduced-motion: no-preference) {{
     .sx-entity {{ transition: background 0.12s ease; }}
     .stButton button {{ transition: background 0.12s ease, border-color 0.12s ease; }}
+    [data-testid="stSidebarNavLink"] {{ transition: background 0.12s ease; }}
   }}
   [data-testid="stMetricValue"] {{ color: {p.ink}; }}
   .sx-card {{ background: {p.surface}; border: 1px solid {p.border}; border-radius: 10px;

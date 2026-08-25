@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 148 32" width="148" height="32" role="img" aria-label="Sentinel">
+  <!-- The ◐ mark the app already uses as its page icon. Colours are the
+       palette's series blue + the mode-shared muted ink, so one file reads
+       on both the light and dark sidebar. -->
+  <circle cx="16" cy="16" r="11" fill="none" stroke="#2a78d6" stroke-width="2.5"/>
+  <path d="M 16 5 A 11 11 0 0 0 16 27 Z" fill="#2a78d6"/>
+  <text x="38" y="22" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="17" font-weight="650" letter-spacing="-0.2" fill="#898781">Sentinel</text>
+</svg>

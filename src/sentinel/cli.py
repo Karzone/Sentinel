@@ -891,6 +891,11 @@ def dashboard(
     # defaults to red. On "distance to stop" a long red bar reads as danger when
     # a long bar is in fact the safe case, so it takes the palette's slot 1.
     env.setdefault("STREAMLIT_THEME_PRIMARY_COLOR", "#2a78d6")
+    # The display face for Streamlit's own widgets (buttons, nav, inputs),
+    # matching shell_css's import — set here so it holds whatever the cwd,
+    # since .streamlit/config.toml is only found when launched from the repo.
+    env.setdefault("STREAMLIT_THEME_FONT",
+                   '"Instrument Sans", system-ui, "Segoe UI", sans-serif')
     env.setdefault("STREAMLIT_THEME_BASE", "dark" if theme == "dark" else "light")
     env["SENTINEL_DB"] = str(config.paths.db)
     if config.source_path:

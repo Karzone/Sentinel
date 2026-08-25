@@ -1575,6 +1575,43 @@ class TestCandleWindow:
         assert len(sma50) == 22, "SMA 50 should cover every displayed candle"
 
 
+class TestInvestHorizon:
+    """"do we need to slightly show long term SMA?" — yes: the Investments
+    open runs on an investor's clock. Longer windows, the 50/200-day pair,
+    and a lookback deep enough that both averages are formed from the first
+    displayed candle when the store holds the history."""
+
+    def test_the_invest_windows_are_longer_and_the_pair_is_50_200(self):
+        windows, sma_pair = views.CANDLE_HORIZONS["invest"]
+        assert windows is views.INVEST_CANDLE_WINDOWS
+        assert list(windows.values()) == [130, 261, 522]
+        assert sma_pair == (50, 200)
+        # The swing horizon is exactly what every page showed before.
+        assert views.CANDLE_HORIZONS["swing"] == (views.CANDLE_WINDOWS, (20, 50))
+
+    def test_the_200_day_average_is_formed_from_the_first_invest_candle(self):
+        # 6-month invest window with the full +200 lookback available: both
+        # long averages must cover every displayed candle, not fade in.
+        spec = charts.candlestick(TestCandlestick()._frame(days=330), "light",
+                                  sma=(50, 200), display_days=130).to_dict()
+        rows_by_shape = list(spec["datasets"].values())
+        bodies = next(r for r in rows_by_shape if "open" in r[0])
+        assert len(bodies) == 130
+        melted = next(r for r in rows_by_shape if "series" in r[0])
+        assert len([r for r in melted if r["series"] == "SMA 50"]) == 130
+        assert len([r for r in melted if r["series"] == "SMA 200"]) == 130
+
+    def test_short_history_degrades_to_a_partial_average_not_a_crash(self):
+        # A 2-year window over a store that only holds ~1.3 years: the 200-day
+        # line starts partway in (the caption says so) instead of erroring.
+        spec = charts.candlestick(TestCandlestick()._frame(days=330), "light",
+                                  sma=(50, 200), display_days=522).to_dict()
+        melted = next(r for r in list(spec["datasets"].values())
+                      if "series" in r[0])
+        sma200 = [r for r in melted if r["series"] == "SMA 200"]
+        assert 0 < len(sma200) < 330
+
+
 class TestInvestmentsLane:
     """The Investments page shows ONLY the long-term idea class — the lane
     that already existed in the domain model but that every surface mixed
@@ -1616,6 +1653,36 @@ class TestInvestmentsLane:
 class TestDesignComponents:
     """The section/header/card anatomy that replaced raw markdown headers and
     opacity-span rows — plus the two rules that keep the type system honest."""
+
+    def test_the_display_face_carries_the_body_not_just_headings(self):
+        """With only headings switched the app still read as stock Streamlit
+        (owner feedback) — the root family must be the display face. Charts
+        are exempt by construction: theme_config reads pal.FONT."""
+        css = ui.shell_css("light")
+        assert f".stApp {{ font-family: {ui.DISPLAY_FONT}; }}" in css
+
+    def test_streamlit_config_loads_the_same_face_for_widgets(self):
+        """Streamlit sets font-family explicitly on its own widgets, so the
+        face must also be named in .streamlit/config.toml — and it must be
+        the SAME family shell_css imports, or widgets silently fall back."""
+        cfg = (pathlib.Path(__file__).parent.parent / ".streamlit" / "config.toml").read_text()
+        assert '"Instrument Sans"' in cfg
+        assert "Instrument+Sans" in ui.shell_css("light"), \
+            "config names a face the page never loads"
+
+    def test_the_current_nav_page_is_never_marked_by_colour_alone(self):
+        css = ui.shell_css("light")
+        current = css[css.index('[aria-current="page"]'):]
+        assert "box-shadow" in current[:400] or "font-weight" in current[:400]
+        assert "font-weight: 600" in current[:600], \
+            "the accent bar needs a weight change beside it"
+
+    def test_the_sidebar_wordmark_ships_and_is_wired(self):
+        asset = (pathlib.Path(__file__).parent.parent / "src" / "sentinel" /
+                 "dashboard" / "assets" / "wordmark.svg")
+        assert asset.exists()
+        app_src = (asset.parent.parent / "app.py").read_text()
+        assert "st.logo" in app_src and "wordmark.svg" in app_src
 
     def test_section_fuses_title_and_note_and_escapes(self):
         block = ui.section("Best <ideas>", "The top five & why.")
