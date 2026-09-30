@@ -34,6 +34,7 @@ run offline with an empty `.env`.
 | ntfy.sh | Mobile push for stop / kill-switch / pipeline events | **Free** | no account; the topic is the only credential | $0 |
 | GitHub Actions | CI | **Free** (private repo) | 2,000 min/month | $0 |
 | Streamlit Community Cloud | Optional demonstration hosting of the dashboard. Fabricated data only — `streamlit_app.py` refuses to serve a database without the demo stamp | **Free** | 1 private app; sleeps when idle; no persistent disk | $0 — **not deployed** |
+| Fly.io | Optional always-on host for `sentinel serve` (dashboard + schedule in one container, state on a volume). | Paid, pay-as-you-go | `shared-cpu-1x` / 1 GB + 1 GB volume | ~£3–5/month — **not deployed** |
 | Cloudflare Tunnel (`cloudflared`) | Publishes the loopback dashboard on an HTTPS hostname without opening a port. Optional; not required to run anything | **Free** | quick tunnels are rate-limited and get a random hostname; a named tunnel needs a free Cloudflare account + a domain | $0 |
 
 Budget guidance from the spec: start at **£40–70/month** total (one

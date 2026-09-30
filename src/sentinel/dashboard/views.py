@@ -39,6 +39,11 @@ class Context:
     #: True only for a local session on a non-demo database — the same policy
     #: as `portfolio.manual.allowed_in`, decided once in app.py.
     writable: bool = False
+    #: True when the Settings page may save: a non-demo database and a config file
+    #: on disk to save to. Independent of `writable` — a hosted session is never
+    #: "local", so it can never record a trade, but it is exactly where the
+    #: watchlist and schedule need editing. Decided once in app.py.
+    settings_writable: bool = False
 
 
 #: Candle-window choices on the stock detail page, in trading days. There is
@@ -782,6 +787,126 @@ def reports(st, ctx: Context) -> None:
     chosen = st.selectbox("Report", list(names), index=0)
     st.divider()
     st.markdown(names[chosen].read_text(encoding="utf-8"))
+
+
+#: Vendor keys the Settings page reports on. Presence only — a value is never
+#: read into the page, let alone rendered.
+_KEY_ROWS = (
+    ("ANTHROPIC_API_KEY", "Anthropic (memos and sentiment)"),
+    ("EODHD_API_KEY", "EODHD (prices, LSE coverage)"),
+    ("FMP_API_KEY", "Financial Modeling Prep (fundamentals)"),
+    ("FINNHUB_API_KEY", "Finnhub (news)"),
+    ("RESEND_API_KEY", "Resend (email digest)"),
+)
+
+
+def settings(st, ctx: Context) -> None:
+    """The second deliberate write seam (after Record a trade): a closed field set.
+
+    Editable here: the watchlist, the two notification addresses, the schedule.
+    Not editable, by construction (`settings.apply_changes` has no parameter that
+    reaches them): risk limits, satellite capital, vendors, sectors, the LLM
+    model, API keys and the dashboard password.
+    """
+    from pathlib import Path
+
+    from .. import serve as serve_mod, settings as cfg_edit
+    from ..config import api_key
+
+    st.markdown("### Settings")
+    st.markdown(
+        '<p class="sx-note">What Sentinel watches and when it runs. Risk limits, '
+        'vendors, API keys and the password are <b>not</b> editable here — limits '
+        'live in the tracked <code>sentinel.toml</code> so a change shows up in a '
+        'diff, and keys live in the host\'s secret store.</p>',
+        unsafe_allow_html=True,
+    )
+
+    flash = st.session_state.pop("_settings_flash", None)
+    if flash:
+        st.success(flash, icon="✅")
+
+    path = ctx.config.source_path
+    editable = bool(ctx.settings_writable and path)
+    if not editable:
+        reason = ("This is a demo database — settings are disabled so fabricated data "
+                  "stays fabricated." if not ctx.settings_writable else
+                  "No sentinel.toml was found, so there is nothing to save to.")
+        st.info(reason, icon="🔒")
+
+    # One flowing paragraph of inline pills: five narrow columns wrapped each
+    # label into a tall stack on a phone.
+    st.markdown(
+        "<p>" + " &nbsp; ".join(
+            ui.badge("good" if api_key(name) is not None else "neutral",
+                     f"{label}: {'set' if api_key(name) is not None else 'not set'}")
+            for name, label in _KEY_ROWS) + "</p>",
+        unsafe_allow_html=True,
+    )
+
+    state = serve_mod.load_state(Path(path).parent) if path else {}
+    if state.get("daily_attempted"):
+        result = state.get("daily_result") or {}
+        st.caption(f"Last scheduled run: {state['daily_attempted']} · "
+                   + (", ".join(f"{k} exit {v}" for k, v in result.items()) or "in progress"))
+    tickers = serve_mod.scoring_tickers(ctx.config, {})
+    st.caption(f"Each run scores {len(tickers)} tickers (the universe plus your watchlist).")
+
+    current = ctx.config
+    universes = [""] + sorted(current.universes)
+    with st.form("settings-form"):
+        watch = st.text_area(
+            "Watchlist", value="\n".join(current.watchlist), disabled=not editable,
+            height=120, help="One ticker per line, SYMBOL.EXCHANGE — e.g. NVDA.US, VWRP.LSE. "
+                             "These are scored on every run alongside the universe.")
+        left, right = st.columns(2, gap="medium")
+        with left:
+            ntfy = st.text_input("Push topic (ntfy)", value=current.notify.ntfy_topic,
+                                 disabled=not editable,
+                                 help="Long and unguessable — it is the only credential.")
+            email = st.text_input("Email the digest to", value=current.notify.email_to,
+                                  disabled=not editable)
+        with right:
+            enabled = st.checkbox("Run on a schedule", value=current.autopilot.enabled,
+                                  disabled=not editable)
+            daily = st.text_input("Weekday run at (HH:MM)", value=current.autopilot.daily_at,
+                                  disabled=not editable)
+            weekly = st.text_input("Sunday review at (HH:MM)", value=current.autopilot.weekly_at,
+                                   disabled=not editable)
+            universe = st.selectbox(
+                "Universe", universes, disabled=not editable,
+                index=universes.index(current.autopilot.universe)
+                if current.autopilot.universe in universes else 0,
+                format_func=lambda u: u or "Automatic")
+        submitted = st.form_submit_button("Save settings", disabled=not editable)
+
+    if not submitted:
+        return
+    try:
+        watch_list = cfg_edit.parse_watchlist(watch)
+        wanted = {
+            "watchlist": watch_list if watch_list != tuple(current.watchlist) else None,
+            "ntfy_topic": ntfy if ntfy != current.notify.ntfy_topic else None,
+            "email_to": email if email != current.notify.email_to else None,
+            "autopilot_enabled": enabled if enabled != current.autopilot.enabled else None,
+            "daily_at": daily if daily != current.autopilot.daily_at else None,
+            "weekly_at": weekly if weekly != current.autopilot.weekly_at else None,
+            "universe": universe if universe != current.autopilot.universe else None,
+        }
+        changed = cfg_edit.save(Path(path), **wanted)
+    except cfg_edit.SettingsError as exc:
+        st.error(str(exc), icon="⚠️")
+        return
+    if changed:
+        # The rerun redraws the form from the file, which is what we want, but it
+        # also discards anything drawn this pass — so the confirmation has to
+        # survive the rerun in session state or the user never sees it.
+        st.session_state["_settings_flash"] = (
+            "Saved: " + ", ".join(changed) + ". The schedule picks this up on its next "
+            "tick (within a minute).")
+        st.rerun()
+    else:
+        st.info("Nothing changed.", icon="ℹ️")
 
 
 def risk(st, ctx: Context) -> None:
@@ -1602,7 +1727,7 @@ def _stat_tiles(st, ctx: Context, stats: dict) -> None:
 #: Sidebar grouping: the three pages a beginner lives in, then everything
 #: else under one label. PAGES stays flat for anything that iterates it.
 NAV_GROUPS = {
-    "Every day": ["Today", "Search", "Investments", "Portfolio"],
+    "Every day": ["Today", "Search", "Investments", "Portfolio", "Settings"],
     "Under the hood": ["Conviction", "Risk", "Ideas", "Evals", "Data health", "Reports"],
 }
 
@@ -1616,4 +1741,5 @@ PAGES = [
     ("Evals", evals),
     ("Data health", data_health),
     ("Search", search), ("Reports", reports),
+    ("Settings", settings),
 ]

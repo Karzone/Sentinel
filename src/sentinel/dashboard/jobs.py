@@ -26,6 +26,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -204,6 +205,31 @@ def start(name: str, *, db_path: str | Path, extra_args: list[str] | None = None
     # parts than the stale-pid sweep in `running()` already gives us. Nothing
     # to do here: `running()` clears it the first time it looks after exit.
     return job
+
+
+def wait(job: RunningJob, *, db_path: str | Path, timeout: float, poll: float = 2.0,
+         sleep=time.sleep, clock=time.monotonic) -> int | None:
+    """Block until ``job`` exits; return its exit code, or None.
+
+    None means the code is unknowable: the wait timed out, or the job was
+    started by a *previous* process (no handle, so no return code — only
+    liveness). The scheduler, which starts its own jobs, always gets a code.
+    Only this process's handle can reap a child, so the code is read here,
+    before ``running()`` or ``alive`` gets the chance to discard the handle.
+    """
+    handle = _handles.get(job.pid)
+    deadline = clock() + timeout
+    while clock() < deadline:
+        if handle is not None:
+            code = handle.poll()
+            if code is not None:
+                _handles.pop(job.pid, None)
+                running(db_path)           # let the stale-lock sweep release the lock
+                return code
+        elif not _pid_alive(job.pid):
+            return None
+        sleep(poll)
+    return None
 
 
 def tail(db_path: str | Path, *, lines: int = 40) -> str:

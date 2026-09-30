@@ -338,3 +338,57 @@ opened offline, or read in three years when the app no longer runs.
 
 The readout and the tunnel read the same query layer as the dashboard, so none
 of the three can report a different number for the same fact.
+
+
+---
+
+# Hosted on Fly.io (no commands)
+
+`sentinel serve` is the whole application in one process: it writes its own config and database on
+first boot, picks real data vendors from whichever keys are present, serves the password-protected
+dashboard, and runs the schedule (weekdays 07:00 and Sundays 18:00, Europe/London). You set secrets
+once, deploy once, and then open a URL on your phone. Nothing else is typed, ever.
+
+## One-time setup
+
+```bash
+# install flyctl: https://fly.io/docs/flyctl/install/ , then
+fly auth login
+fly launch --no-deploy --copy-config          # accept fly.toml; pick a unique app name
+fly volumes create sentinel_data --size 1 --region lhr
+fly secrets set \
+  SENTINEL_DASHBOARD_PASSWORD='a-long-random-string' \
+  ANTHROPIC_API_KEY=... \
+  EODHD_API_KEY=... \
+  FINNHUB_API_KEY=...
+fly deploy
+```
+
+Open `https://<your-app>.fly.dev`, sign in with the password, then use **Add to Home Screen** on the
+phone. On first boot it scores the `demo` universe straight away (or `ai` once `EODHD_API_KEY` is
+set), so the page is never empty.
+
+Every key is optional. Add one later with `fly secrets set` and the next boot upgrades the matching
+provider line in `sentinel.toml` from `fixture` to the real vendor — **never the other way**, so a
+lapsed key cannot quietly turn a real brief into one built on generated prices.
+
+## Day to day
+
+| Want | Do |
+|---|---|
+| Change the watchlist, schedule, push topic | the **Settings** page |
+| See what ran | Settings shows the last run and its exit codes; `fly logs` has the detail |
+| Stop the spend | untick **Run on a schedule** in Settings |
+| Change a risk limit | edit `sentinel.toml` on the volume — deliberately not in the UI |
+| Get alerted when a run dies | set the push topic in Settings; failures go through `notify failure` |
+
+## What to know before relying on it
+
+* **It costs API credits.** A run makes 2–4 LLM calls per ticker; the `ai` universe is 25 tickers.
+  The machine is ~£3–5/month and never stops (the scheduler lives in it, so `auto_stop_machines` is off).
+* **Your portfolio data lives on that volume.** Nothing is copied elsewhere. Fly volumes are single-disk,
+  so snapshot them (`fly volumes snapshots create`) if the history matters.
+* **Record a trade is off on the hosted site.** The hosted dashboard is never a local session, which
+  is what keeps it read-only for the database. Enter positions from a local session or the CLI.
+* **The password is the only lock.** Use a long random one; consider Cloudflare Access in front.
+* **The brief is research output, not advice.** No order is ever placed.

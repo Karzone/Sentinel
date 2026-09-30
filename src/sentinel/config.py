@@ -8,6 +8,7 @@ them shows up in a diff and a code review; API keys belong nowhere near git.
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from decimal import Decimal
 from pathlib import Path
@@ -103,6 +104,41 @@ class NotifyConfig(BaseModel):
     earnings_warning_hours: int = 48
 
 
+class AutopilotConfig(BaseModel):
+    """The hosted schedule (`sentinel serve`). Nothing here touches a risk limit.
+
+    Times are wall-clock in ``timezone`` so the brief keeps arriving at 07:00
+    local through both clock changes without anyone editing anything.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    timezone: str = "Europe/London"
+    #: Mon-Fri. EOD vendors publish nothing at weekends.
+    daily_at: str = "07:00"
+    #: Sundays: the retrospective review.
+    weekly_at: str = "18:00"
+    #: "" = automatic: the `ai` universe once a real price vendor is configured,
+    #: the offline `demo` universe before that.
+    universe: str = ""
+    history_days: int = 800
+
+    @field_validator("daily_at", "weekly_at")
+    @classmethod
+    def _clock(cls, v: str) -> str:
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
+            raise ValueError(f"expected a 24-hour HH:MM time, got {v!r}")
+        return v
+
+    @field_validator("history_days")
+    @classmethod
+    def _history(cls, v: int) -> int:
+        if not 30 <= v <= 2000:
+            raise ValueError("history_days must be between 30 and 2000")
+        return v
+
+
 class PathsConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -121,6 +157,7 @@ class Config(BaseModel):
     llm: LlmConfig = Field(default_factory=LlmConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
+    autopilot: AutopilotConfig = Field(default_factory=AutopilotConfig)
     universes: Mapping[str, tuple[str, ...]] = Field(default_factory=dict)
     watchlist: tuple[str, ...] = ()
     sectors: Mapping[str, str] = Field(default_factory=dict)
@@ -262,6 +299,15 @@ enabled       = true
 # Push is for "act or review now" only. The daily brief goes by email.
 email_to    = ""
 ntfy_topic  = ""
+
+[autopilot]
+# Used by `sentinel serve` (the hosted, self-running mode). Editable from the
+# dashboard's Settings page; risk limits above are not.
+enabled   = true
+timezone  = "Europe/London"
+daily_at  = "07:00"   # Mon-Fri: ingest, then the brief
+weekly_at = "18:00"   # Sunday: the weekly review
+universe  = ""        # "" = automatic (ai once a real vendor key is set, else demo)
 
 [paths]
 db     = "data/sentinel.sqlite"

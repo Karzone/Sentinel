@@ -1,0 +1,35 @@
+# Fly.io config for the hosted Sentinel. Edit `app` to a unique name, or let
+# `fly launch --no-deploy` fill it in.
+app = "sentinel-CHANGE-ME"
+primary_region = "lhr"           # London: the schedule and the vendors are UK-centred
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  SENTINEL_HOME = "/data"
+
+[mounts]
+  source = "sentinel_data"       # fly volumes create sentinel_data --size 1
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # The scheduler lives in this process, so the machine must never stop or scale
+  # to zero: a stopped machine runs no 07:00 brief.
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "60s"
+    interval = "30s"
+    method = "GET"
+    path = "/_stcore/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"                 # Streamlit + pandas + a scoring run; 512mb is tight

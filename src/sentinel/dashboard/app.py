@@ -76,6 +76,7 @@ def main() -> None:
             dashboard_local=auth.is_local_session(),
             demo=queries.is_demo_database(conn),
         ),
+        settings_writable=not queries.is_demo_database(conn),
     )
 
     if queries.is_demo_database(conn):
@@ -109,7 +110,7 @@ def main() -> None:
         notice = st.session_state.get("_auth_notice")
         if notice:
             st.warning(notice, icon="🔓")
-        st.caption("Read-only research dashboard")
+        st.caption("Research dashboard — read-only except Settings and trades")
         st.caption(f"Database `{db_path}`")
         st.caption(f"Satellite capital £{float(config.satellite_capital_gbp):,.0f}")
         st.caption(f"sentinel {__version__}")

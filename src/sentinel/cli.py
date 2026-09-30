@@ -935,6 +935,28 @@ def dashboard(
 
 
 @app.command()
+def serve(
+    port: int = typer.Option(8501, "--port", envvar="PORT",
+                             help="Port to listen on. Hosts set PORT; that wins."),
+    home: Optional[str] = typer.Option(
+        None, "--home", envvar="SENTINEL_HOME",
+        help="Directory holding sentinel.toml and data/. Point it at the host's "
+             "persistent volume. Defaults to the current directory."),
+) -> None:
+    """Run Sentinel unattended: set itself up, serve the dashboard, run the schedule.
+
+    For a host (Fly.io, a VPS, a Pi). On first boot it writes the starter config
+    and database; it picks real data vendors from whichever keys are present;
+    weekdays it ingests and writes the brief, Sundays it writes the weekly review.
+    It will not start without SENTINEL_DASHBOARD_PASSWORD.
+    """
+    from . import serve as serve_mod
+
+    configure()
+    raise typer.Exit(serve_mod.serve(Path(home or "."), port))
+
+
+@app.command()
 def phone(
     port: int = typer.Option(8501, "--port"),
     theme: str = typer.Option("light", "--theme", help="light | dark"),

@@ -50,7 +50,7 @@ run the code to learn what actually guards an invariant.
    confidence falls. "We could not see" must stay distinguishable from "we looked and it was
    average", or the calibration evals mean nothing.
 8. **The daily brief never pushes.** Push is a closed five-event allow-list.
-9. **The dashboard cannot write** — its connection is opened `mode=ro`.
+9. **The dashboard cannot write to the database** — its connection is opened `mode=ro`. Two deliberate seams write *other* things, each with a closed scope (`specs/sentinel.md` §6a/§7b): Record a trade (own connection, local sessions only) and Settings (`settings.apply_changes`: watchlist, notification addresses and schedule in `sentinel.toml` — no parameter reaches a risk limit). Widening either is a spec change, not a code change.
 
 ## Verification gate
 

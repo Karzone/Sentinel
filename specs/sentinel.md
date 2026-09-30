@@ -218,8 +218,10 @@ Recorded so the gaps are known rather than discovered.
 - **No live LLM call has been made.** The client is exercised end to end against a stub SDK
   (including the repair turn and the no-`temperature` behaviour), but there is no
   `ANTHROPIC_API_KEY` in this environment.
-- **The dashboard is read-only, with ONE deliberate write seam (2026-08-24 owner decision):
-  Record a trade.** The owner asked for position entry on the web page, which supersedes the
+- **The dashboard is read-only, with TWO deliberate write seams: Record a trade (2026-08-24) and
+  Settings (2026-09-30, below).** The database connection stays `mode=ro` either way; Settings writes
+  `sentinel.toml`, not the database.
+- **Seam 1 — Record a trade (2026-08-24 owner decision).** The owner asked for position entry on the web page, which supersedes the
   earlier CLI-only stance. The rules live in `portfolio.manual` — one implementation under both
   `sentinel paper buy`/`sell` and the Portfolio page's form, so they cannot drift: never an order
   anywhere (no broker connection); a risk-limit breach WARNS but records, because the book must
@@ -390,6 +392,52 @@ Sharpe itself so the gate can usually be evaluated for real.
 
 The runners' exit-code routing, locking and PATH repair are covered by `tests/test_deploy.py`
 against a fake `uv`, and both scripts have been run end-to-end against a real database.
+
+## 7b. Hosted mode (`sentinel serve`, 2026-09-30 owner decision)
+
+The owner's requirement: use the app from a phone *without running commands*. `sentinel serve` is
+one process that does what the README otherwise asks a person to type: it writes the starter
+`sentinel.toml` and the database on first boot, picks real vendors from whichever keys are present,
+serves the dashboard, and runs the schedule itself (weekdays 07:00, Sundays 18:00 review, both
+`Europe/London` wall-clock, DST-correct). A `Dockerfile` and `fly.toml` deploy it to Fly.io with
+state on a volume at `/data`. The first boot runs the daily job immediately so the page is not empty.
+
+What it may and may not do — each line is enforced, and pinned by a test in `tests/test_serve.py`:
+
+* **It will not start without a password** (`serve.password_problem`, same 8-character floor as
+  `sentinel phone`), and refuses *before* creating any file. The dashboard's own fail-closed gate
+  still applies behind it: the bind is `0.0.0.0`, which is never a "local session".
+* **Bootstrap only ever upgrades vendors `fixture` → real, never the reverse**
+  (`serve.upgrade_providers`). A lapsed key must not silently turn a real brief into one built on
+  generated prices. An owner-edited file is never overwritten.
+* **The schedule shares the dashboard's job lock** (`dashboard.jobs`), so a Run button and a
+  scheduled run can never write the one SQLite file at once; `serve._start_when_free` waits, it does
+  not race. The attempt is recorded *before* the run, so a crashing job is retried tomorrow, not in a
+  30-second loop.
+* **Exit codes keep the shell runner's contract** (`serve.classify`): 0 ok, 2 degraded (alert, keep
+  going), anything else stops and pushes `PIPELINE_FAILURE`. A failed ingest never produces a brief.
+* **Catch-up, not cron-minute matching** (`serve.due`): a job is due once its time has passed today
+  and it has not been attempted today; yesterday's miss is not replayed.
+* It places no orders, and the hosted dashboard is never a local session, so **Record a trade stays
+  off there** — positions are still entered from a local session or the CLI.
+
+### Seam 2 — Settings (`settings.py`, `dashboard/views.settings`)
+
+The hosted dashboard needs a way to change the watchlist and schedule without SSH, so the Settings
+page may write `sentinel.toml`. The guarantee is a **closed field set in a function signature**:
+`settings.apply_changes` accepts only `watchlist`, `ntfy_topic`, `email_to`, `autopilot_enabled`,
+`daily_at`, `weekly_at`, `universe`. There is no parameter that reaches `[risk]`,
+`satellite_capital_gbp`, vendors, `[sectors]`, the LLM model, API keys or the password — pinned by
+`test_apply_changes_has_no_parameter_that_reaches_a_risk_limit` and a byte-identical-`[risk]` test.
+Edits are text edits (the file's comments explain the limits, and a TOML round-trip would delete
+them), the result is validated as a whole `Config` before anything touches disk, the write is atomic
+with one `.bak`, and every change is appended to `settings-changes.log` (the DB audit trail is
+append-only by trigger and the dashboard's connection is read-only, so the record sits beside the
+config). Disabled on a demo database. API keys are deliberately *not* editable: they live in the
+host's secret store, never in a browser form.
+
+Cost note: a run makes 2–4 LLM calls per ticker. The `ai` universe is 25 tickers, so a daily run
+costs real API credits; `[autopilot] enabled = false` (or the Settings checkbox) stops the schedule.
 
 ## 8. Verification
 

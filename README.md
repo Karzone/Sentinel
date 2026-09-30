@@ -42,6 +42,7 @@ mandatory 6-month paper period gates any real-money use of short-term signals.
 | `sentinel evals` | Signal-quality, calibration and performance evals |
 | `sentinel notify test` | Send one test message down each notification channel |
 | `sentinel dashboard` | Launch the read-only Streamlit dashboard |
+| `sentinel serve` | **Hosted, hands-off mode**: self-setup, dashboard and schedule in one process (see [deploy/README.md](deploy/README.md#hosted-on-flyio-no-commands)) |
 
 ## Layout
 
@@ -59,7 +60,9 @@ src/sentinel/
   evals/         performance, calibration and signal-quality evals
   brief/         daily brief + weekly review renderers
   notify/        scheduled digest vs event-driven push (kept strictly apart)
-  dashboard/     read-only Streamlit dashboard (validated palette, no writes)
+  serve.py       `sentinel serve`: bootstrap + scheduler + supervisor for hosting
+  settings.py    the Settings page's closed-field-set writer for sentinel.toml
+  dashboard/     Streamlit dashboard (validated palette; DB read-only, two narrow write seams)
 ```
 
 ## Design rules that are not negotiable
