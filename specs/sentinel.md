@@ -436,6 +436,28 @@ append-only by trigger and the dashboard's connection is read-only, so the recor
 config). Disabled on a demo database. API keys are deliberately *not* editable: they live in the
 host's secret store, never in a browser form.
 
+### Refresh now, and the installable app (2026-09-30, same owner requirement)
+
+* **Refresh the report now** (Settings page) does not run anything: it creates a flag file
+  (`data/run-requested`, `serve.request_run`) that the scheduler — the only process that starts the
+  pipeline on a host — consumes on its next tick (≤30 s), under the same job lock. A file, not a
+  field in the state JSON, because the dashboard and the scheduler are different processes and two
+  read-modify-writers on one JSON file lose updates. The flag is consumed *before* the run so a
+  crash cannot replay it, and it works with the schedule switched off. The page's write scope
+  stays "ask", never "do".
+* **Installable app.** `dashboard/static/` (icons + `manifest.json`) is served by
+  `--server.enableStaticServing`, and `app.py` adds the manifest/touch-icon tags from JavaScript
+  (Streamlit offers no way to edit `<head>`), idempotently and *before* the password gate so the
+  sign-in page is what gets installed. **That directory is public by construction** — a manifest is
+  fetched without the session cookie — so `tests/test_pwa.py` pins its contents to exactly four
+  files. Path-traversal out of it was probed live and returns 400.
+* **Command-free deploy.** `render.yaml` (Render Blueprint: New → Blueprint → fill prompted secrets)
+  and `.github/workflows/fly-deploy.yml` (manual `workflow_dispatch`; creates the app and volume on
+  first run, sets secrets from GitHub secrets, deploys). Neither deploys on push: deploying is the
+  owner's decision. The `container` job in `ci.yml` builds the image and boots it on an empty volume
+  with no keys, requiring that it configures itself, serves health and the manifest, completes its
+  first-boot run, and refuses to start without a password.
+
 Cost note: a run makes 2–4 LLM calls per ticker. The `ai` universe is 25 tickers, so a daily run
 costs real API credits; `[autopilot] enabled = false` (or the Settings checkbox) stops the schedule.
 

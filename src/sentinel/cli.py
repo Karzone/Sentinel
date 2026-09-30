@@ -929,7 +929,9 @@ def dashboard(
     subprocess.run(
         [sys.executable, "-m", "streamlit", "run", str(script),
          "--server.port", str(port), "--server.address", address,
-         "--server.headless", "true", "--browser.gatherUsageStats", "false"],
+         "--server.headless", "true", "--browser.gatherUsageStats", "false",
+         # Serves dashboard/static (icons + manifest) so the page is installable.
+         "--server.enableStaticServing", "true"],
         env=env, check=False,
     )
 

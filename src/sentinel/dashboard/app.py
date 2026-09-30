@@ -37,11 +37,45 @@ def _mode() -> str:
     return fallback if fallback in pal.PALETTES else "light"
 
 
+#: Makes the page installable as a phone app ("Add to Home Screen" launches it
+#: full-screen with its own icon). Streamlit gives a script no way to edit <head>,
+#: so this adds the tags from JavaScript — idempotently, because every rerun
+#: re-executes it. The files it points at live in dashboard/static and are served
+#: by `--server.enableStaticServing`; that directory is PUBLIC (a manifest is
+#: fetched without the session cookie), so it holds icons and a manifest and
+#: nothing else — tests/test_pwa.py enforces that.
+_PWA_HEAD = """
+<script>
+(function () {
+  var d = window.document;
+  if (d.getElementById("sx-pwa")) return;
+  function add(tag, attrs) {
+    var el = d.createElement(tag);
+    Object.keys(attrs).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+    d.head.appendChild(el);
+    return el;
+  }
+  add("meta", {id: "sx-pwa", name: "sx-pwa", content: "1"});
+  add("link", {rel: "manifest", href: "/app/static/manifest.json"});
+  add("link", {rel: "apple-touch-icon", href: "/app/static/apple-touch-icon.png"});
+  add("meta", {name: "theme-color", content: "#2a78d6"});
+  add("meta", {name: "mobile-web-app-capable", content: "yes"});
+  add("meta", {name: "apple-mobile-web-app-capable", content: "yes"});
+  add("meta", {name: "apple-mobile-web-app-title", content: "Sentinel"});
+})();
+</script>
+"""
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Sentinel", page_icon="◐", layout="wide",
         initial_sidebar_state="expanded",
     )
+
+    # Before the password gate on purpose: the sign-in page is what gets
+    # installed, and it carries no data.
+    st.html(_PWA_HEAD, unsafe_allow_javascript=True)
 
     mode = _mode()
     pal.enable(mode)

@@ -1,0 +1,60 @@
+name: Deploy to Fly.io
+
+# Manual only. Deploying is the owner's decision, never a side effect of a push.
+#
+# One-time setup, all in the GitHub web UI (Settings -> Secrets and variables -> Actions):
+#   secret   FLY_API_TOKEN                 a Fly deploy token  (fly.io -> Tokens)
+#   secret   SENTINEL_DASHBOARD_PASSWORD   the dashboard password (8+ characters, long and random)
+#   secret   ANTHROPIC_API_KEY             optional
+#   secret   EODHD_API_KEY                 optional
+#   secret   FINNHUB_API_KEY               optional
+#   variable FLY_APP_NAME                  a globally unique name, e.g. sentinel-yourname
+# Then Actions -> "Deploy to Fly.io" -> Run workflow. First run creates the app and volume;
+# later runs redeploy and refresh the secrets.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      APP: ${{ vars.FLY_APP_NAME }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Check the inputs exist
+        run: |
+          test -n "$APP" || { echo "::error::Set the repository variable FLY_APP_NAME"; exit 1; }
+          test -n "$FLY_API_TOKEN" || { echo "::error::Set the secret FLY_API_TOKEN"; exit 1; }
+          test -n "${{ secrets.SENTINEL_DASHBOARD_PASSWORD }}" || { echo "::error::Set the secret SENTINEL_DASHBOARD_PASSWORD"; exit 1; }
+
+      - name: Create the app and volume on first run
+        run: |
+          flyctl apps list --json | grep -q "\"Name\": *\"$APP\"" || flyctl apps create "$APP"
+          flyctl volumes list --app "$APP" --json | grep -q '"name": *"sentinel_data"' \
+            || flyctl volumes create sentinel_data --app "$APP" --region lhr --size 1 --yes
+
+      - name: Set secrets
+        run: |
+          # Only the ones that are set: an empty secret would shadow a real one.
+          args=()
+          [ -n "$SENTINEL_DASHBOARD_PASSWORD" ] && args+=("SENTINEL_DASHBOARD_PASSWORD=$SENTINEL_DASHBOARD_PASSWORD")
+          [ -n "$ANTHROPIC_API_KEY" ] && args+=("ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
+          [ -n "$EODHD_API_KEY" ] && args+=("EODHD_API_KEY=$EODHD_API_KEY")
+          [ -n "$FINNHUB_API_KEY" ] && args+=("FINNHUB_API_KEY=$FINNHUB_API_KEY")
+          flyctl secrets set --app "$APP" --stage "${args[@]}"
+        env:
+          SENTINEL_DASHBOARD_PASSWORD: ${{ secrets.SENTINEL_DASHBOARD_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+
+      - name: Deploy
+        run: flyctl deploy --app "$APP" --remote-only

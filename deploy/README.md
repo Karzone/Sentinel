@@ -349,7 +349,24 @@ first boot, picks real data vendors from whichever keys are present, serves the 
 dashboard, and runs the schedule (weekdays 07:00 and Sundays 18:00, Europe/London). You set secrets
 once, deploy once, and then open a URL on your phone. Nothing else is typed, ever.
 
-## One-time setup
+## Command-free deploy (recommended): click, don't type
+
+Nothing below needs a terminal.
+
+**Render** (simplest): Render dashboard → **New → Blueprint** → choose this repo → it reads
+`render.yaml` and prompts for `SENTINEL_DASHBOARD_PASSWORD` and the optional keys → **Apply**.
+Needs a paid instance because the database lives on a persistent disk.
+
+**Fly.io** (cheaper): in the GitHub repo, **Settings → Secrets and variables → Actions**, add the
+secrets `FLY_API_TOKEN`, `SENTINEL_DASHBOARD_PASSWORD` (and optionally `ANTHROPIC_API_KEY`,
+`EODHD_API_KEY`, `FINNHUB_API_KEY`) and the variable `FLY_APP_NAME`; then **Actions → Deploy to
+Fly.io → Run workflow**. The first run creates the app and volume; later runs redeploy.
+
+Then, on the phone: open the URL, sign in, and **Add to Home Screen** — it installs as a full-screen
+app with its own icon. The **Settings** page has a **Refresh the report now** button, so you never
+need to wait for 07:00 or open a terminal.
+
+## One-time setup with the command line (alternative)
 
 ```bash
 # install flyctl: https://fly.io/docs/flyctl/install/ , then

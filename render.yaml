@@ -1,0 +1,32 @@
+# Render Blueprint: one-click hosting for `sentinel serve`, no command line.
+#
+#   Render dashboard -> New -> Blueprint -> pick this repo -> fill the prompted secrets -> Apply.
+#
+# A persistent disk is required (the SQLite database and sentinel.toml live on it), and Render
+# only offers disks on paid instances, so this is a paid service. The instance must also stay
+# running: the scheduler lives inside it, and a sleeping instance runs no 07:00 brief.
+services:
+  - type: web
+    name: sentinel
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: frankfurt            # nearest to the UK that Render offers
+    healthCheckPath: /_stcore/health
+    autoDeploy: false            # deploying is the owner's decision, not a side effect of a push
+    disk:
+      name: sentinel-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: SENTINEL_HOME
+        value: /data
+      # Secrets: Render prompts for each on first apply and never stores them in git.
+      - key: SENTINEL_DASHBOARD_PASSWORD
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: EODHD_API_KEY
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false

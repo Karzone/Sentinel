@@ -213,6 +213,41 @@ def save_state(home: Path, state: Mapping[str, object]) -> None:
     os.replace(tmp, path)
 
 
+RUN_REQUEST_FILE = "run-requested"
+
+
+def request_run(home: Path) -> bool:
+    """Ask the scheduler to run the daily job now. True if newly requested.
+
+    A separate flag file, not a field in the state JSON: the dashboard process
+    calls this, and two processes read-modify-writing one JSON file is a lost
+    update waiting to happen. Creating an empty file is atomic and cannot
+    clobber the scheduler's bookkeeping. The dashboard still writes nothing to
+    the database.
+    """
+    flag = home / "data" / RUN_REQUEST_FILE
+    if flag.exists():
+        return False
+    flag.parent.mkdir(parents=True, exist_ok=True)
+    flag.write_text(dt.datetime.now(dt.UTC).isoformat(timespec="seconds"), encoding="utf-8")
+    return True
+
+
+def run_requested_at(home: Path) -> str | None:
+    try:
+        return (home / "data" / RUN_REQUEST_FILE).read_text(encoding="utf-8") or "pending"
+    except FileNotFoundError:
+        return None
+
+
+def _consume_run_request(home: Path) -> bool:
+    try:
+        (home / "data" / RUN_REQUEST_FILE).unlink()
+        return True
+    except FileNotFoundError:
+        return False
+
+
 # ---------------------------------------------------------------- running jobs
 
 
@@ -324,7 +359,11 @@ def scheduler_tick(
     config = load_config(home / "sentinel.toml")
     now = local_now(config.autopilot, now_utc or dt.datetime.now(dt.UTC))
     state = load_state(home)
-    kind = due(now, state, config.autopilot)
+    # A manual request from the dashboard's "Run now" wins over the clock, and
+    # works with the schedule switched off: "refresh my report" is an explicit
+    # ask, not an automation. It is consumed BEFORE the run so a crash cannot
+    # replay it in a loop.
+    kind = "daily" if _consume_run_request(home) else due(now, state, config.autopilot)
     if kind is None:
         return None
 

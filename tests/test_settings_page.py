@@ -44,11 +44,15 @@ def _app():
     return AppTest.from_function(_script, default_timeout=30).run()
 
 
+def _button(at, label):
+    return next(b for b in at.button if b.label == label)
+
+
 def test_saving_a_watchlist_writes_the_file_and_the_page_shows_it_after(home):
     at = _app()
     assert not at.exception
     at.text_area[0].set_value("nvda.us\nVWRP.LSE")
-    at.button[0].click().run()
+    _button(at, "Save settings").click().run()
     assert not at.exception
     assert load_config(home / "sentinel.toml").watchlist == ("NVDA.US", "VWRP.LSE")
     # after the rerun the widget is hydrated from the file, not from session state
@@ -61,7 +65,7 @@ def test_a_bad_ticker_is_reported_and_nothing_is_written(home):
     before = (home / "sentinel.toml").read_text()
     at = _app()
     at.text_area[0].set_value("NVDA")
-    at.button[0].click().run()
+    _button(at, "Save settings").click().run()
     assert any("SYMBOL.EXCHANGE" in e.value for e in at.error)
     assert (home / "sentinel.toml").read_text() == before
 
@@ -69,7 +73,8 @@ def test_a_bad_ticker_is_reported_and_nothing_is_written(home):
 def test_on_a_demo_database_the_form_is_disabled_and_says_why(home, monkeypatch):
     monkeypatch.setenv("T_WRITABLE", "0")
     at = _app()
-    assert at.text_area[0].disabled and at.button[0].disabled
+    assert at.text_area[0].disabled and _button(at, "Save settings").disabled
+    assert _button(at, "Refresh the report now").disabled
     assert any("demo database" in i.value for i in at.info)
 
 
@@ -84,9 +89,20 @@ def test_key_status_shows_presence_and_never_the_value(home, monkeypatch):
 def test_saving_the_schedule_changes_what_the_scheduler_reads(home):
     at = _app()
     at.checkbox[0].set_value(False)
-    at.button[0].click().run()
+    _button(at, "Save settings").click().run()
     assert not at.exception
     assert tomllib.loads((home / "sentinel.toml").read_text())["autopilot"]["enabled"] is False
     assert serve.due(serve.local_now(load_config(home / "sentinel.toml").autopilot,
                                      __import__("datetime").datetime.now(__import__("datetime").UTC)),
                      {}, load_config(home / "sentinel.toml").autopilot) is None
+
+
+def test_refresh_now_queues_a_request_the_scheduler_will_honour(home):
+    at = _app()
+    assert not _button(at, "Refresh the report now").disabled
+    _button(at, "Refresh the report now").click().run()
+    assert not at.exception
+    assert serve.run_requested_at(home) is not None
+    # once queued the button is disabled: no double-queueing from a double tap
+    assert _button(at, "Refresh the report now").disabled
+    assert any("queued" in i.value for i in at.info)

@@ -244,6 +244,49 @@ class TestSchedulerTick:
                                     runner=runner) == "daily"
 
 
+class TestRunNow:
+    """The dashboard's "Refresh the report now" — a request flag, not a write."""
+
+    def test_a_request_runs_the_daily_job_outside_the_schedule_and_only_once(self, tmp_path):
+        serve.bootstrap(tmp_path, {})
+        # already ran today, and it is 03:00 — nothing would be due on the clock
+        serve.save_state(tmp_path, {"daily_attempted": "2026-10-05", "weekly_attempted": ""})
+        ran = []
+        runner = lambda kind, *a, **k: ran.append(kind) or []          # noqa: E731
+        now = at("2026-10-05T02:00")
+        assert serve.scheduler_tick(tmp_path, {}, now_utc=now, runner=runner) is None
+        assert serve.request_run(tmp_path) is True
+        assert serve.scheduler_tick(tmp_path, {}, now_utc=now, runner=runner) == "daily"
+        assert serve.scheduler_tick(tmp_path, {}, now_utc=now, runner=runner) is None
+        assert ran == ["daily"]
+
+    def test_it_works_with_the_schedule_switched_off(self, tmp_path):
+        from sentinel import settings
+
+        serve.bootstrap(tmp_path, {})
+        settings.save(tmp_path / "sentinel.toml", autopilot_enabled=False)
+        serve.request_run(tmp_path)
+        assert serve.scheduler_tick(tmp_path, {}, now_utc=at("2026-10-03T03:00"),
+                                    runner=lambda *a, **k: []) == "daily"
+
+    def test_the_flag_is_consumed_before_the_run_so_a_crash_cannot_replay_it(self, tmp_path):
+        serve.bootstrap(tmp_path, {})
+        serve.request_run(tmp_path)
+
+        def crashing(*_a, **_k):
+            assert serve.run_requested_at(tmp_path) is None         # already gone
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError):
+            serve.scheduler_tick(tmp_path, {}, now_utc=at("2026-10-05T12:00"), runner=crashing)
+        assert serve.run_requested_at(tmp_path) is None
+
+    def test_a_second_request_while_one_is_pending_is_a_no_op(self, tmp_path):
+        serve.bootstrap(tmp_path, {})
+        assert serve.request_run(tmp_path) is True
+        assert serve.request_run(tmp_path) is False
+
+
 # --------------------------------------------- real subprocesses, one shared lock
 
 

@@ -852,6 +852,8 @@ def settings(st, ctx: Context) -> None:
     tickers = serve_mod.scoring_tickers(ctx.config, {})
     st.caption(f"Each run scores {len(tickers)} tickers (the universe plus your watchlist).")
 
+    _run_now_panel(st, ctx, path, editable)
+
     current = ctx.config
     universes = [""] + sorted(current.universes)
     with st.form("settings-form"):
@@ -907,6 +909,38 @@ def settings(st, ctx: Context) -> None:
         st.rerun()
     else:
         st.info("Nothing changed.", icon="ℹ️")
+
+
+def _run_now_panel(st, ctx: Context, path, editable: bool) -> None:
+    """Refresh the report from the page — no terminal, no waiting for 07:00.
+
+    The button does not run anything itself: it drops a request flag that the
+    scheduler (the only process allowed to start the pipeline here) picks up
+    within its next tick, under the same job lock as every other run. That keeps
+    this page's write scope to "ask", never "do".
+    """
+    from pathlib import Path
+
+    from .. import serve as serve_mod
+    from . import jobs
+
+    home = Path(path).parent if path else None
+    running = jobs.running(ctx.db_path) if ctx.db_path else None
+    pending = serve_mod.run_requested_at(home) if home else None
+    if running is not None:
+        st.info(f"A {running.name} run is in progress (started {running.started_at}). "
+                "Reload in a minute or two; the Today page updates when it finishes.",
+                icon="⏳")
+    elif pending:
+        st.info("A report refresh is queued and will start within a minute.", icon="⏳")
+    st.markdown(
+        '<p class="sx-note">Refreshing fetches new data and re-scores every ticker. '
+        'It uses your data-vendor and Anthropic credits, and takes several minutes '
+        'for a large universe.</p>', unsafe_allow_html=True)
+    if st.button("Refresh the report now", disabled=not editable or running is not None
+                 or bool(pending), key="run-now"):
+        serve_mod.request_run(home)
+        st.rerun()                 # the queued notice above is drawn from the flag file
 
 
 def risk(st, ctx: Context) -> None:
